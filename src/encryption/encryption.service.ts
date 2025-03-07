@@ -4,7 +4,7 @@ import * as fs from 'fs';
 
 @Injectable()
 export class EncryptionService {
-  private readonly key = process.env.AES_SECRET_KEY; // 🔒 Secret Key from .env
+  private readonly key = process.env.AES_SECRET_KEY; 
 
   encryptFile(filePath: string): string {
     const fileData = fs.readFileSync(filePath, 'utf-8');

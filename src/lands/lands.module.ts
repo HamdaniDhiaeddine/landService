@@ -1,22 +1,20 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { LandsService } from './lands.service';
-import { LandsController } from './lands.controller';
+import { LandService } from './lands.service';
+import { LandController } from './lands.controller';
 import { Land, LandSchema } from './schemas/land.schema';
-import { LocationModule } from '../location/location.module';
-import { AuthModule } from '../auth/auth.module';
-import { EncryptionModule } from '../encryption/encryption.module';
-import { IpfsModule } from '../ipfs/ipfs.module'; // ✅ Import IpfsModule
+import { AuthModule } from 'src/auth/auth.module';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { EncryptionModule } from 'src/encryption/encryption.module';
+import { IpfsModule } from 'src/ipfs/ipfs.module';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([{ name: Land.name, schema: LandSchema }]),
-    LocationModule,
-    AuthModule,
-    EncryptionModule,
-    IpfsModule, // ✅ Now LandsModule can use IpfsService
-  ],
-  controllers: [LandsController],
-  providers: [LandsService],
+  imports: [MongooseModule.forFeature([{ name: Land.name, schema: LandSchema }]),
+  AuthModule,
+  IpfsModule,
+  EncryptionModule,],
+  
+  controllers: [LandController],
+  providers: [LandService, JwtAuthGuard],
 })
-export class LandsModule {}
+export class LandModule {}

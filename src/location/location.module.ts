@@ -3,7 +3,7 @@ import { LocationService } from './location.service';
 import { HttpModule } from '@nestjs/axios';
 
 @Module({
-  imports: [HttpModule], // Allows making HTTP requests
+  imports: [HttpModule], 
   providers: [LocationService],
   exports: [LocationService],
 })
