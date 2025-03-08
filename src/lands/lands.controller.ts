@@ -1,9 +1,10 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseInterceptors, UploadedFiles } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseInterceptors, UploadedFiles, Res } from '@nestjs/common';
 import { CreateLandDto } from './dto/create-land.dto';
 import { UpdateLandDto } from './dto/update-land.dto';
 import { LandService } from './lands.service';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { multerConfig } from 'src/config/multer.config';
+import { Response } from 'express';
 
 
 @Controller('lands')
@@ -51,5 +52,12 @@ export class LandController {
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.landService.remove(id);
+  }
+
+  @Get('file/:cid')
+  async getFile(@Param('cid') cid: string, @Res() res: Response): Promise<void> {
+    const fileBuffer = await this.landService.getDecryptedFile(cid);
+    // Use res.buffer() for binary data
+    res.type('application/octet-stream').send(fileBuffer);
   }
 }
