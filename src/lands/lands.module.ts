@@ -32,8 +32,8 @@ import { SERVICES } from 'src/constants/service';
     EncryptionModule,
     IpfsModule, // ✅ Now LandsModule can use IpfsService
   ],
-  controllers: [LandsController],
-  providers: [LandsService],
+  controllers: [LandController],
+  providers: [LandService],
 
 })
 export class LandModule {}
