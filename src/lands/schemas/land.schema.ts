@@ -5,20 +5,35 @@ export type LandDocument = Land & Document;
 
 @Schema({ timestamps: true })
 export class Land {
-  @Prop({ required: true }) title: string;
-  @Prop({ required: true }) description: string;
-  @Prop({ required: false }) location: string;
-  @Prop({ required: true }) price: number;
+  @Prop({ required: true })
+  title: string;
 
-  @Prop({ required: false }) ownerId: string; // Extracted from JWT token
+  @Prop()
+  description: string;
 
-  @Prop({ required: false }) latitude?: number; // Google Maps API
-  @Prop({ required: false }) longitude?: number; // Google Maps API
+  @Prop({ required: true })
+  location: string;
 
-  @Prop({ required: false, default: 'pending' }) status: string;
+  //@Prop({ required: true })
+  //price: number;
 
-  @Prop({ required: false }) ipfsCIDs?: string[]; // IPFS storage for documents
-  @Prop({ required: false }) imageCIDs?: string[]; // 🔹 IPFS storage for land images
+  @Prop({ required: true })
+  ownerId: string;
+
+  @Prop()
+  latitude?: number;
+
+  @Prop()
+  longitude?: number;
+
+  @Prop({ required: true, enum: ['available', 'sold', 'reserved'], default: 'available' })
+  status: string;
+
+  @Prop({ type: [String], default: [] })
+  ipfsCIDs?: string[];
+
+  @Prop({ type: [String], default: [] })
+  imageCIDs?: string[];
 }
 
 export const LandSchema = SchemaFactory.createForClass(Land);
