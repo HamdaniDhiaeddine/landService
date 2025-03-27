@@ -3,6 +3,6 @@ import { IpfsService } from './ipfs.service';
 
 @Module({
   providers: [IpfsService],
-  exports: [IpfsService], // ✅ Export it so other modules can use it
+  exports: [IpfsService], 
 })
 export class IpfsModule {}
