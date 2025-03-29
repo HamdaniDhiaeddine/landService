@@ -26,8 +26,8 @@ class ListTokenDto {
   price: string;
 }
 
-@Controller('land')
-export class LandController {
+@Controller('blockchain')
+export class BlockchainController {
   constructor(private readonly blockchainService: BlockchainService) {}
 
   @Post('register')

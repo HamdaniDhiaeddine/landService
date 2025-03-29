@@ -14,6 +14,7 @@ import { LandModule } from './lands/lands.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true, // Rend ConfigModule disponible globalement
+      envFilePath: '.env'
     }),
     MongooseModule.forRoot(process.env.MONGO_URI),
     LandModule,

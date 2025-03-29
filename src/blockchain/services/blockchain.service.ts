@@ -4,6 +4,7 @@ import { blockchainConfig } from '../config/blockchain.config';
 import LandRegistryJSON from '../abis/LandRegistry.json';
 import LandTokenJSON from '../abis/LandToken.json';
 import LandTokenMarketplaceJSON from '../abis/LandTokenMarketplace.json';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class BlockchainService implements OnModuleInit {
@@ -13,8 +14,7 @@ export class BlockchainService implements OnModuleInit {
   private landToken: Contract;
   private marketplace: Contract;
 
-  // Clé privée pour le développement (à déplacer dans les variables d'environnement)
-  private readonly PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'; // Clé privée du premier compte Hardhat
+  constructor(private configService: ConfigService) {}
 
   async onModuleInit() {
     await this.initializeBlockchain();
@@ -22,40 +22,91 @@ export class BlockchainService implements OnModuleInit {
 
   private async initializeBlockchain() {
     try {
-      // Initialiser le provider et le signer
-      this.provider = new JsonRpcProvider(blockchainConfig.provider.local);
-      this.signer = new Wallet(this.PRIVATE_KEY, this.provider);
+      // Forcer l'utilisation de Sepolia
+      console.log('Initializing contracts on Sepolia network...');
+      
+      const rpcUrl = this.configService.get<string>('SEPOLIA_RPC_URL');
+      if (!rpcUrl) {
+        throw new Error('SEPOLIA_RPC_URL not configured');
+      }
 
-      // Créer les interfaces à partir des ABIs
-      const landRegistryInterface = new Interface(LandRegistryJSON.abi as InterfaceAbi);
-      const landTokenInterface = new Interface(LandTokenJSON.abi as InterfaceAbi);
-      const marketplaceInterface = new Interface(LandTokenMarketplaceJSON.abi as InterfaceAbi);
+      // Initialiser le provider avec Sepolia
+      this.provider = new JsonRpcProvider(rpcUrl);
+      
+      // Attendre que le provider soit prêt
+      await this.provider.ready;
+      const network = await this.provider.getNetwork();
+      console.log('Connected to network:', network.name);
 
-      // Initialiser les contrats avec les interfaces
+      // Vérifier la clé privée
+      const privateKey = this.configService.get<string>('PRIVATE_KEY');
+      if (!privateKey) {
+        throw new Error('PRIVATE_KEY not configured');
+      }
+
+      this.signer = new Wallet(privateKey, this.provider);
+      console.log('Signer address:', await this.signer.getAddress());
+
+      // Vérifier les adresses des contrats
+      const registryAddress = this.configService.get<string>('LAND_REGISTRY_ADDRESS');
+      const tokenAddress = this.configService.get<string>('LAND_TOKEN_ADDRESS');
+      const marketplaceAddress = this.configService.get<string>('MARKETPLACE_ADDRESS');
+
+      if (!registryAddress || !tokenAddress || !marketplaceAddress) {
+        throw new Error('Contract addresses not properly configured');
+      }
+
+      // Initialiser les contrats avec les adresses de Sepolia
       this.landRegistry = new Contract(
-        blockchainConfig.contracts.LandRegistry.address,
-        landRegistryInterface,
+        registryAddress,
+        LandRegistryJSON.abi as InterfaceAbi,
         this.signer
       );
 
       this.landToken = new Contract(
-        blockchainConfig.contracts.LandToken.address,
-        landTokenInterface,
+        tokenAddress,
+        LandTokenJSON.abi as InterfaceAbi,
         this.signer
       );
 
       this.marketplace = new Contract(
-        blockchainConfig.contracts.LandTokenMarketplace.address,
-        marketplaceInterface,
+        marketplaceAddress,
+        LandTokenMarketplaceJSON.abi as InterfaceAbi,
         this.signer
       );
 
-      console.log('Blockchain service initialized successfully');
+      // Vérifier la connexion aux contrats
+      await this.verifyContracts();
+
+      console.log('Blockchain service initialized successfully on Sepolia');
     } catch (error) {
       console.error('Error initializing blockchain service:', error);
       throw error;
     }
   }
+
+  private async verifyContracts() {
+    try {
+      // Vérifier LandRegistry
+      const registryOwner = await this.landRegistry.owner();
+      console.log('LandRegistry connected at:', this.landRegistry.target);
+      console.log('LandRegistry owner:', registryOwner);
+
+      // Vérifier LandToken
+      const tokenName = await this.landToken.name();
+      console.log('LandToken connected at:', this.landToken.target);
+      console.log('Token name:', tokenName);
+
+      // Vérifier Marketplace
+      const marketplaceLandToken = await this.marketplace.landToken();
+      console.log('Marketplace connected at:', this.marketplace.target);
+      console.log('Marketplace LandToken:', marketplaceLandToken);
+    } catch (error) {
+      console.error('Contract verification failed:', error);
+      throw new Error('Failed to verify contract connections');
+    }
+  }
+
 
 
   // Méthodes Land Registry
