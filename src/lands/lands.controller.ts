@@ -1,13 +1,19 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseInterceptors, UploadedFiles, Res } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseInterceptors, UploadedFiles, Res, UseGuards } from '@nestjs/common';
 import { CreateLandDto } from './dto/create-land.dto';
 import { UpdateLandDto } from './dto/update-land.dto';
 import { LandService } from './lands.service';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { multerConfig } from 'src/config/multer.config';
 import { Response } from 'express';
+import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { PermissionGuard } from 'src/auth/guards/permission.guard';
+import { RequirePermissions } from 'src/auth/decorators/require-permissions.decorator';
+import { Resource } from 'src/auth/enums/resource.enum';
+import { Action } from 'src/auth/enums/action.enum';
 
 
 @Controller('lands')
+@UseGuards(JwtAuthGuard, PermissionGuard)
 export class LandController {
   constructor(private readonly landService: LandService) {}
 
@@ -21,6 +27,10 @@ export class LandController {
       multerConfig,  // Use your multer config
     ),
   )
+  @RequirePermissions({
+    resource: Resource.LAND,
+    actions: [Action.UPLOAD_LAND]
+  })
   async create(@Body() createLandDto: CreateLandDto, @UploadedFiles() files: any) {
     // Map the uploaded files' paths to the DTO
     if (files?.documents) {
@@ -35,6 +45,10 @@ export class LandController {
   }
 
   @Get()
+  @RequirePermissions({
+    resource: Resource.LAND,
+    actions: [Action.VIEW_OWN_LANDS]
+  })
   findAll() {
     return this.landService.findAll();
   }
@@ -45,11 +59,19 @@ export class LandController {
   }
 
   @Patch(':id')
+  @RequirePermissions({
+    resource: Resource.LAND,
+    actions: [Action.EDIT_LAND]
+  })
   update(@Param('id') id: string, @Body() updateLandDto: UpdateLandDto) {
     return this.landService.update(id, updateLandDto);
   }
 
   @Delete(':id')
+  @RequirePermissions({
+    resource: Resource.LAND,
+    actions: [Action.DELETE_LAND]
+  })
   remove(@Param('id') id: string) {
     return this.landService.remove(id);
   }
