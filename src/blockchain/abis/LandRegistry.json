@@ -1,350 +1,301 @@
 {
-    "abi": [
+  "abi": [
+    {
+      "inputs": [],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "InsufficientTokens",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidCIDComments",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidTokenAmount",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidTokenizer",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidValidator",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "LandAlreadyTokenized",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "LandNotRegistered",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "LandNotValid",
+      "type": "error"
+    },
+    {
+      "inputs": [
         {
-          "inputs": [],
-          "stateMutability": "nonpayable",
-          "type": "constructor"
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        }
+      ],
+      "name": "OwnableInvalidOwner",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "OwnableUnauthorizedAccount",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "UnauthorizedTokenizer",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "UnauthorizedValidator",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ValidatorAlreadyValidated",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "landId",
+          "type": "uint256"
         },
         {
-          "inputs": [],
-          "name": "InsufficientTokens",
-          "type": "error"
+          "indexed": false,
+          "internalType": "string",
+          "name": "location",
+          "type": "string"
         },
         {
-          "inputs": [],
-          "name": "InvalidCIDComments",
-          "type": "error"
+          "indexed": false,
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
         },
         {
-          "inputs": [],
-          "name": "InvalidTokenAmount",
-          "type": "error"
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "totalTokens",
+          "type": "uint256"
         },
         {
-          "inputs": [],
-          "name": "InvalidTokenizer",
-          "type": "error"
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "pricePerToken",
+          "type": "uint256"
         },
         {
-          "inputs": [],
-          "name": "InvalidValidator",
-          "type": "error"
+          "indexed": false,
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        }
+      ],
+      "name": "LandRegistered",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "landId",
+          "type": "uint256"
+        }
+      ],
+      "name": "LandTokenized",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "previousOwner",
+          "type": "address"
         },
         {
-          "inputs": [],
-          "name": "LandAlreadyTokenized",
-          "type": "error"
+          "indexed": true,
+          "internalType": "address",
+          "name": "newOwner",
+          "type": "address"
+        }
+      ],
+      "name": "OwnershipTransferred",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "Paused",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "Unpaused",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "landId",
+          "type": "uint256"
         },
         {
-          "inputs": [],
-          "name": "LandNotRegistered",
-          "type": "error"
+          "indexed": false,
+          "internalType": "address",
+          "name": "validator",
+          "type": "address"
         },
         {
-          "inputs": [],
-          "name": "LandNotValid",
-          "type": "error"
+          "indexed": false,
+          "internalType": "bool",
+          "name": "isValidated",
+          "type": "bool"
+        }
+      ],
+      "name": "ValidationAdded",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "validator",
+          "type": "address"
         },
         {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "owner",
-              "type": "address"
-            }
-          ],
-          "name": "OwnableInvalidOwner",
-          "type": "error"
+          "indexed": false,
+          "internalType": "enum LandRegistry.ValidatorType",
+          "name": "validatorType",
+          "type": "uint8"
+        }
+      ],
+      "name": "ValidatorAdded",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_validator",
+          "type": "address"
         },
         {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "account",
-              "type": "address"
-            }
-          ],
-          "name": "OwnableUnauthorizedAccount",
-          "type": "error"
+          "internalType": "enum LandRegistry.ValidatorType",
+          "name": "_type",
+          "type": "uint8"
+        }
+      ],
+      "name": "addValidator",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_landId",
+          "type": "uint256"
+        }
+      ],
+      "name": "getLandDetails",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "isTokenized",
+          "type": "bool"
         },
         {
-          "inputs": [],
-          "name": "UnauthorizedTokenizer",
-          "type": "error"
+          "internalType": "enum LandRegistry.ValidationStatus",
+          "name": "status",
+          "type": "uint8"
         },
         {
-          "inputs": [],
-          "name": "UnauthorizedValidator",
-          "type": "error"
+          "internalType": "uint256",
+          "name": "availableTokens",
+          "type": "uint256"
         },
         {
-          "inputs": [],
-          "name": "ValidatorAlreadyValidated",
-          "type": "error"
+          "internalType": "uint256",
+          "name": "pricePerToken",
+          "type": "uint256"
         },
         {
-          "anonymous": false,
-          "inputs": [
-            {
-              "indexed": true,
-              "internalType": "uint256",
-              "name": "landId",
-              "type": "uint256"
-            },
-            {
-              "indexed": false,
-              "internalType": "string",
-              "name": "location",
-              "type": "string"
-            },
-            {
-              "indexed": false,
-              "internalType": "address",
-              "name": "owner",
-              "type": "address"
-            },
-            {
-              "indexed": false,
-              "internalType": "uint256",
-              "name": "totalTokens",
-              "type": "uint256"
-            },
-            {
-              "indexed": false,
-              "internalType": "uint256",
-              "name": "pricePerToken",
-              "type": "uint256"
-            },
-            {
-              "indexed": false,
-              "internalType": "string",
-              "name": "cid",
-              "type": "string"
-            }
-          ],
-          "name": "LandRegistered",
-          "type": "event"
-        },
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
         {
-          "anonymous": false,
-          "inputs": [
-            {
-              "indexed": true,
-              "internalType": "uint256",
-              "name": "landId",
-              "type": "uint256"
-            }
-          ],
-          "name": "LandTokenized",
-          "type": "event"
-        },
+          "internalType": "uint256",
+          "name": "_landId",
+          "type": "uint256"
+        }
+      ],
+      "name": "getValidationHistory",
+      "outputs": [
         {
-          "anonymous": false,
-          "inputs": [
-            {
-              "indexed": true,
-              "internalType": "address",
-              "name": "previousOwner",
-              "type": "address"
-            },
-            {
-              "indexed": true,
-              "internalType": "address",
-              "name": "newOwner",
-              "type": "address"
-            }
-          ],
-          "name": "OwnershipTransferred",
-          "type": "event"
-        },
-        {
-          "anonymous": false,
-          "inputs": [
-            {
-              "indexed": false,
-              "internalType": "address",
-              "name": "account",
-              "type": "address"
-            }
-          ],
-          "name": "Paused",
-          "type": "event"
-        },
-        {
-          "anonymous": false,
-          "inputs": [
-            {
-              "indexed": false,
-              "internalType": "address",
-              "name": "account",
-              "type": "address"
-            }
-          ],
-          "name": "Unpaused",
-          "type": "event"
-        },
-        {
-          "anonymous": false,
-          "inputs": [
-            {
-              "indexed": true,
-              "internalType": "uint256",
-              "name": "landId",
-              "type": "uint256"
-            },
-            {
-              "indexed": false,
-              "internalType": "address",
-              "name": "validator",
-              "type": "address"
-            },
-            {
-              "indexed": false,
-              "internalType": "bool",
-              "name": "isValidated",
-              "type": "bool"
-            }
-          ],
-          "name": "ValidationAdded",
-          "type": "event"
-        },
-        {
-          "anonymous": false,
-          "inputs": [
-            {
-              "indexed": true,
-              "internalType": "address",
-              "name": "validator",
-              "type": "address"
-            },
-            {
-              "indexed": false,
-              "internalType": "enum LandRegistry.ValidatorType",
-              "name": "validatorType",
-              "type": "uint8"
-            }
-          ],
-          "name": "ValidatorAdded",
-          "type": "event"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "_validator",
-              "type": "address"
-            },
-            {
-              "internalType": "enum LandRegistry.ValidatorType",
-              "name": "_type",
-              "type": "uint8"
-            }
-          ],
-          "name": "addValidator",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "_landId",
-              "type": "uint256"
-            }
-          ],
-          "name": "getLandDetails",
-          "outputs": [
-            {
-              "internalType": "bool",
-              "name": "isTokenized",
-              "type": "bool"
-            },
-            {
-              "internalType": "enum LandRegistry.ValidationStatus",
-              "name": "status",
-              "type": "uint8"
-            },
-            {
-              "internalType": "uint256",
-              "name": "availableTokens",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "pricePerToken",
-              "type": "uint256"
-            },
-            {
-              "internalType": "string",
-              "name": "cid",
-              "type": "string"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "_landId",
-              "type": "uint256"
-            }
-          ],
-          "name": "getValidationHistory",
-          "outputs": [
-            {
-              "components": [
-                {
-                  "internalType": "address",
-                  "name": "validator",
-                  "type": "address"
-                },
-                {
-                  "internalType": "uint256",
-                  "name": "timestamp",
-                  "type": "uint256"
-                },
-                {
-                  "internalType": "string",
-                  "name": "cidComments",
-                  "type": "string"
-                },
-                {
-                  "internalType": "enum LandRegistry.ValidatorType",
-                  "name": "validatorType",
-                  "type": "uint8"
-                },
-                {
-                  "internalType": "bool",
-                  "name": "isValidated",
-                  "type": "bool"
-                }
-              ],
-              "internalType": "struct LandRegistry.Validation[]",
-              "name": "",
-              "type": "tuple[]"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "name": "landValidations",
-          "outputs": [
+          "components": [
             {
               "internalType": "address",
               "name": "validator",
@@ -371,281 +322,330 @@
               "type": "bool"
             }
           ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "",
-              "type": "uint256"
-            }
-          ],
-          "name": "lands",
-          "outputs": [
-            {
-              "internalType": "string",
-              "name": "location",
-              "type": "string"
-            },
-            {
-              "internalType": "uint256",
-              "name": "surface",
-              "type": "uint256"
-            },
-            {
-              "internalType": "address",
-              "name": "owner",
-              "type": "address"
-            },
-            {
-              "internalType": "bool",
-              "name": "isRegistered",
-              "type": "bool"
-            },
-            {
-              "internalType": "uint256",
-              "name": "registrationDate",
-              "type": "uint256"
-            },
-            {
-              "internalType": "enum LandRegistry.ValidationStatus",
-              "name": "status",
-              "type": "uint8"
-            },
-            {
-              "internalType": "uint256",
-              "name": "totalTokens",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "availableTokens",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "pricePerToken",
-              "type": "uint256"
-            },
-            {
-              "internalType": "bool",
-              "name": "isTokenized",
-              "type": "bool"
-            },
-            {
-              "internalType": "string",
-              "name": "cid",
-              "type": "string"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "owner",
-          "outputs": [
-            {
-              "internalType": "address",
-              "name": "",
-              "type": "address"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "pause",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "paused",
-          "outputs": [
-            {
-              "internalType": "bool",
-              "name": "",
-              "type": "bool"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "string",
-              "name": "_location",
-              "type": "string"
-            },
-            {
-              "internalType": "uint256",
-              "name": "_surface",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "_totalTokens",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "_pricePerToken",
-              "type": "uint256"
-            },
-            {
-              "internalType": "string",
-              "name": "_cid",
-              "type": "string"
-            }
-          ],
-          "name": "registerLand",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "_tokenizer",
-              "type": "address"
-            }
-          ],
-          "name": "setTokenizer",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "_landId",
-              "type": "uint256"
-            }
-          ],
-          "name": "tokenizeLand",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "tokenizer",
-          "outputs": [
-            {
-              "internalType": "address",
-              "name": "",
-              "type": "address"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "newOwner",
-              "type": "address"
-            }
-          ],
-          "name": "transferOwnership",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [],
-          "name": "unpause",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "_landId",
-              "type": "uint256"
-            },
-            {
-              "internalType": "uint256",
-              "name": "_amount",
-              "type": "uint256"
-            }
-          ],
-          "name": "updateAvailableTokens",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "uint256",
-              "name": "_landId",
-              "type": "uint256"
-            },
-            {
-              "internalType": "string",
-              "name": "_cidComments",
-              "type": "string"
-            },
-            {
-              "internalType": "bool",
-              "name": "_isValid",
-              "type": "bool"
-            }
-          ],
-          "name": "validateLand",
-          "outputs": [],
-          "stateMutability": "nonpayable",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "",
-              "type": "address"
-            }
-          ],
-          "name": "validatorTypes",
-          "outputs": [
-            {
-              "internalType": "enum LandRegistry.ValidatorType",
-              "name": "",
-              "type": "uint8"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
-        },
-        {
-          "inputs": [
-            {
-              "internalType": "address",
-              "name": "",
-              "type": "address"
-            }
-          ],
-          "name": "validators",
-          "outputs": [
-            {
-              "internalType": "bool",
-              "name": "",
-              "type": "bool"
-            }
-          ],
-          "stateMutability": "view",
-          "type": "function"
+          "internalType": "struct LandRegistry.Validation[]",
+          "name": "",
+          "type": "tuple[]"
         }
-      ]
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "landValidations",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "validator",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "timestamp",
+          "type": "uint256"
+        },
+        {
+          "internalType": "string",
+          "name": "cidComments",
+          "type": "string"
+        },
+        {
+          "internalType": "enum LandRegistry.ValidatorType",
+          "name": "validatorType",
+          "type": "uint8"
+        },
+        {
+          "internalType": "bool",
+          "name": "isValidated",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "name": "lands",
+      "outputs": [
+        {
+          "internalType": "string",
+          "name": "location",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "surface",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "internalType": "bool",
+          "name": "isRegistered",
+          "type": "bool"
+        },
+        {
+          "internalType": "uint256",
+          "name": "registrationDate",
+          "type": "uint256"
+        },
+        {
+          "internalType": "enum LandRegistry.ValidationStatus",
+          "name": "status",
+          "type": "uint8"
+        },
+        {
+          "internalType": "uint256",
+          "name": "totalTokens",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "availableTokens",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "pricePerToken",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "isTokenized",
+          "type": "bool"
+        },
+        {
+          "internalType": "string",
+          "name": "cid",
+          "type": "string"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "owner",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "pause",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "paused",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "_location",
+          "type": "string"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_surface",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_totalTokens",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_pricePerToken",
+          "type": "uint256"
+        },
+        {
+          "internalType": "string",
+          "name": "_cid",
+          "type": "string"
+        }
+      ],
+      "name": "registerLand",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_tokenizer",
+          "type": "address"
+        }
+      ],
+      "name": "setTokenizer",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_landId",
+          "type": "uint256"
+        }
+      ],
+      "name": "tokenizeLand",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "tokenizer",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "newOwner",
+          "type": "address"
+        }
+      ],
+      "name": "transferOwnership",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "unpause",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_landId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "updateAvailableTokens",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_landId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "string",
+          "name": "_cidComments",
+          "type": "string"
+        },
+        {
+          "internalType": "bool",
+          "name": "_isValid",
+          "type": "bool"
+        }
+      ],
+      "name": "validateLand",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "name": "validatorTypes",
+      "outputs": [
+        {
+          "internalType": "enum LandRegistry.ValidatorType",
+          "name": "",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "name": "validators",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ]
 }

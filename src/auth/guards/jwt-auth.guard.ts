@@ -9,7 +9,7 @@ interface RequestWithUser extends Request {
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private jwtService: JwtService) {}
+  constructor(private jwtService: JwtService) { }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<RequestWithUser>();
@@ -33,12 +33,14 @@ export class JwtAuthGuard implements CanActivate {
       req.user = payload;
 
       // Log pour le debugging
-      console.log(`[${new Date().toISOString()}] Accès autorisé pour:`, {
-        userId: payload.userId,
-        email: payload.email,
-        role: payload.role,
-        permissions: payload.permissions?.length
-      });
+      console.log(`
+      [${new Date().toISOString()}] Accès autorisé :
+      User ID: ${payload.userId}
+      Email: ${payload.email}
+      Role: ${payload.role}
+      Permissions:
+      ${payload.permissions?.map(p => `  - ${p.resource}: [${p.actions.join(', ')}]`).join('\n')}
+      `);
 
       return true;
     } catch (error) {

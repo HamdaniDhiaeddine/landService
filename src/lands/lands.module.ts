@@ -10,6 +10,7 @@ import { IpfsModule } from '../ipfs/ipfs.module'; // ✅ Import IpfsModule
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { ConfigService } from '@nestjs/config';
 import { SERVICES } from 'src/constants/service';
+import { BlockchainModule } from 'src/blockchain/blockchain.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { SERVICES } from 'src/constants/service';
     AuthModule,
     EncryptionModule,
     IpfsModule, // ✅ Now LandsModule can use IpfsService
+    BlockchainModule, 
   ],
   controllers: [LandController],
   providers: [LandService],

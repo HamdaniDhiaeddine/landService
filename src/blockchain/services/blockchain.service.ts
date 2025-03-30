@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import { Contract, JsonRpcProvider, Wallet, Interface, InterfaceAbi } from 'ethers';
+import { Contract, JsonRpcProvider, Wallet, Interface, InterfaceAbi, ethers } from 'ethers';
 import { blockchainConfig } from '../config/blockchain.config';
 import LandRegistryJSON from '../abis/LandRegistry.json';
 import LandTokenJSON from '../abis/LandToken.json';
@@ -14,7 +14,7 @@ export class BlockchainService implements OnModuleInit {
   private landToken: Contract;
   private marketplace: Contract;
 
-  constructor(private configService: ConfigService) {}
+  constructor(private configService: ConfigService) { }
 
   async onModuleInit() {
     await this.initializeBlockchain();
@@ -24,7 +24,7 @@ export class BlockchainService implements OnModuleInit {
     try {
       // Forcer l'utilisation de Sepolia
       console.log('Initializing contracts on Sepolia network...');
-      
+
       const rpcUrl = this.configService.get<string>('SEPOLIA_RPC_URL');
       if (!rpcUrl) {
         throw new Error('SEPOLIA_RPC_URL not configured');
@@ -32,7 +32,7 @@ export class BlockchainService implements OnModuleInit {
 
       // Initialiser le provider avec Sepolia
       this.provider = new JsonRpcProvider(rpcUrl);
-      
+
       // Attendre que le provider soit prêt
       await this.provider.ready;
       const network = await this.provider.getNetwork();
@@ -107,27 +107,70 @@ export class BlockchainService implements OnModuleInit {
     }
   }
 
-
-
   // Méthodes Land Registry
-  async registerLand(location: string, surface: number, totalTokens: number, pricePerToken: string, cid: string) {
+  async registerLand(landData: {
+    title: string;
+    location: string;
+    surface: number;
+    totalTokens: number;
+    pricePerToken: string;
+    owner: string;          // Adresse Ethereum du propriétaire
+    metadataCID: string;    // CID IPFS avec les métadonnées complètes
+  }) {
     try {
+      // Vérification des données
+      if (!landData.owner || !ethers.isAddress(landData.owner)) {
+        throw new Error('Invalid owner address');
+      }
+
+      // Conversion des valeurs pour la blockchain
+      const surface = BigInt(landData.surface);
+      const totalTokens = BigInt(landData.totalTokens);
+      const pricePerToken = ethers.parseEther(landData.pricePerToken);
+
+      // Appel au smart contract avec toutes les informations
       const tx = await this.landRegistry.registerLand(
-        location,
-        surface,
-        totalTokens,
-        pricePerToken,
-        cid
+        landData.location,           // Localisation
+        surface,                     // Surface en m²
+        totalTokens,                 // Nombre total de tokens
+        pricePerToken,              // Prix par token en ETH
+        landData.metadataCID,       // CID IPFS pour les métadonnées
+        {
+          from: landData.owner      // Spécifier l'adresse du propriétaire
+        }
       );
+
       const receipt = await tx.wait();
-      console.log('Land registered successfully:', receipt.hash);
-      return receipt;
+
+      // Récupérer l'ID du terrain depuis l'événement
+      const event = receipt.logs.find(
+        log => log.eventName === 'LandRegistered'
+      );
+
+      if (!event) {
+        throw new Error('Land registration event not found');
+      }
+
+      const landId = event.args[0]; // Premier argument de l'événement est landId
+
+      console.log('Land registered successfully:', {
+        landId: landId.toString(),
+        txHash: receipt.hash,
+        owner: landData.owner,
+        block: receipt.blockNumber
+      });
+
+      return {
+        landId: landId.toString(),
+        hash: receipt.hash,
+        blockNumber: receipt.blockNumber
+      };
     } catch (error) {
       console.error('Error registering land:', error);
       throw new Error(`Erreur lors de l'enregistrement du terrain: ${error.message}`);
     }
   }
-
+  
   async getLandDetails(landId: number) {
     try {
       const land = await this.landRegistry.lands(landId);

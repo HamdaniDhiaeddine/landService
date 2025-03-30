@@ -1,7 +1,4 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
-
-export type LandDocument = Land & Document;
 
 @Schema({ timestamps: true })
 export class Land {
@@ -14,11 +11,20 @@ export class Land {
   @Prop({ required: true })
   location: string;
 
-  //@Prop({ required: true })
-  //price: number;
+  @Prop({ required: true })
+  surface: number;
+
+  @Prop({ required: true })
+  totalTokens: number;
+
+  @Prop({ required: true })
+  pricePerToken: string;
 
   @Prop({ required: true })
   ownerId: string;
+
+  @Prop({ required: true })
+  ownerAddress: string; // Adresse Ethereum du propriétaire
 
   @Prop()
   latitude?: number;
@@ -26,14 +32,27 @@ export class Land {
   @Prop()
   longitude?: number;
 
-  @Prop({ required: true, enum: ['available', 'sold', 'reserved'], default: 'available' })
+  @Prop({ 
+    required: true, 
+    enum: ['pending_validation', 'validated', 'rejected', 'tokenized'], 
+    default: 'pending_validation' 
+  })
   status: string;
 
   @Prop({ type: [String], default: [] })
-  ipfsCIDs?: string[];
+  ipfsCIDs: string[];
 
   @Prop({ type: [String], default: [] })
-  imageCIDs?: string[];
+  imageCIDs: string[];
+
+  @Prop()
+  metadataCID: string;
+
+  @Prop()
+  blockchainTxHash: string;
+
+  @Prop()
+  blockchainLandId: string;
 }
 
 export const LandSchema = SchemaFactory.createForClass(Land);

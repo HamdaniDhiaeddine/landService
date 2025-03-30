@@ -1,14 +1,15 @@
-import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, Logger } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { PERMISSIONS_KEY, RequiredPermission } from '../decorators/require-permissions.decorator';
 
 @Injectable()
 export class PermissionGuard implements CanActivate {
+  private readonly logger = new Logger(PermissionGuard.name);
+
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const requiredPermissions = this.reflector.get<RequiredPermission>(
-      PERMISSIONS_KEY,
+    const requiredPermissions = this.reflector.get<{ resource: string; actions: string[] }>(
+      'permissions',
       context.getHandler()
     );
 
@@ -19,19 +20,23 @@ export class PermissionGuard implements CanActivate {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
 
-    if (!user || !user.permissions) {
-      return false;
+    this.logger.debug('Required Permissions:', requiredPermissions);
+    this.logger.debug('User Permissions:', user.permissions);
+
+    const hasPermission = user.permissions?.some(permission => 
+      permission.resource === requiredPermissions.resource &&
+      permission.actions.some(action => 
+        requiredPermissions.actions.includes(action)
+      )
+    );
+
+    if (!hasPermission) {
+      this.logger.warn(`Permission denied for user ${user.email}. Required: `, {
+        required: requiredPermissions,
+        userHas: user.permissions
+      });
     }
 
-    return this.matchPermissions(requiredPermissions, user.permissions);
-  }
-
-  private matchPermissions(required: RequiredPermission, userPermissions: any[]): boolean {
-    const permission = userPermissions.find(p => p.resource === required.resource);
-    if (!permission) return false;
-
-    return required.actions.every(action => 
-      permission.actions.includes(action)
-    );
+    return hasPermission;
   }
 }
