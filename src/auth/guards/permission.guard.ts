@@ -5,7 +5,7 @@ import { Reflector } from '@nestjs/core';
 export class PermissionGuard implements CanActivate {
   private readonly logger = new Logger(PermissionGuard.name);
 
-  constructor(private reflector: Reflector) {}
+  constructor(private reflector: Reflector) { }
 
   canActivate(context: ExecutionContext): boolean {
     const requiredPermissions = this.reflector.get<{ resource: string; actions: string[] }>(
@@ -22,10 +22,13 @@ export class PermissionGuard implements CanActivate {
 
     this.logger.debug('Required Permissions:', requiredPermissions);
     this.logger.debug('User Permissions:', user.permissions);
+    // Filtrer et afficher les permissions spécifiques aux terres
+    const landPermissions = user.permissions?.filter(permission => permission.resource === 'land');
+    this.logger.debug('User Permissions for Lands:', landPermissions);
 
-    const hasPermission = user.permissions?.some(permission => 
+    const hasPermission = user.permissions?.some(permission =>
       permission.resource === requiredPermissions.resource &&
-      permission.actions.some(action => 
+      permission.actions.some(action =>
         requiredPermissions.actions.includes(action)
       )
     );

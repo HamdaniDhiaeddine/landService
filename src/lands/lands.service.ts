@@ -1,4 +1,4 @@
-import { Injectable, Logger, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, InternalServerErrorException, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Land } from './schemas/land.schema';
@@ -9,6 +9,11 @@ import { EncryptionService } from 'src/encryption/encryption.service';
 import * as fs from 'fs/promises';
 import { BlockchainService } from 'src/blockchain/services/blockchain.service';
 import { ethers } from 'ethers';
+import { RelayerService } from 'src/blockchain/services/relayer.service';
+import { Validation, ValidationDocument } from './schemas/validation.schema';
+import { ObjectId } from 'mongodb';
+import { LandValidationStatus, ValidateLandDto, ValidationMetadata, ValidationRequest, ValidationResponse } from 'src/blockchain/interfaces/validation.interface';
+import { JWTPayload } from 'src/auth/interfaces/jwt-payload.interface';
 
 @Injectable()
 export class LandService {
@@ -16,9 +21,11 @@ export class LandService {
 
   constructor(
     @InjectModel(Land.name) private landModel: Model<Land>,
+    @InjectModel(Validation.name) private validationModel: Model<ValidationDocument>,
     private readonly ipfsService: IpfsService,
     private readonly blockchainService: BlockchainService,
     private readonly encryptionService: EncryptionService,
+    private readonly relayerService: RelayerService
   ) { }
 
   async create(createLandDto: CreateLandDto, ownerAddress: string): Promise<Land> {
@@ -159,4 +166,60 @@ export class LandService {
     const result = await this.landModel.findByIdAndDelete(id).exec();
     if (!result) throw new NotFoundException(`Land with ID ${id} not found`);
   }
+
+  async updateValidationStatus(
+    id: string,
+    validationData: {
+      status: string;
+      validatedBy: string;
+      validationTxHash: string;
+      validationTimestamp: Date;
+    }
+  ) {
+    return this.landModel.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          validationStatus: validationData.status,
+          validatedBy: validationData.validatedBy,
+          validationTxHash: validationData.validationTxHash,
+          validationTimestamp: validationData.validationTimestamp
+        }
+      },
+      { new: true }
+    );
+  }
+  
+  async createValidation(validationData: {
+    landId: string;
+    validator: string;
+    cidComments: string;
+    isValid: boolean;
+    txHash: string;
+    blockNumber: number;
+    timestamp: Date;
+  }): Promise<Validation> {
+    const validation = new this.validationModel(validationData);
+    try {
+      return await validation.save();
+    } catch (error) {
+      this.logger.error('Error creating validation:', error.stack);
+      throw new InternalServerErrorException('Failed to create validation');
+    }
+  }
+
+  async findValidationsByLandId(landId: number): Promise<Validation[]> {
+    return this.validationModel.find({ landId }).exec();
+  }
+  async getAllLandsFromBlockchain() {
+    try {
+      const lands = await this.blockchainService.getAllLands();
+      return lands;
+    } catch (error) {
+      throw new Error(`Failed to fetch lands from blockchain: ${error.message}`);
+    }
+  }
+
+
+
 }

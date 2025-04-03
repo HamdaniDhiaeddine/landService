@@ -25,9 +25,9 @@ export class JwtAuthGuard implements CanActivate {
       });
 
       // Vérification 2FA si nécessaire
-      if (payload.isTwoFactorAuthenticated === false) {
+     /* if (payload.isTwoFactorAuthenticated === true) {
         throw new UnauthorizedException('Authentification à deux facteurs requise');
-      }
+      }*/
 
       // Stocker les informations utilisateur complètes dans la requête
       req.user = payload;
