@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsArray } from 'class-validator';
+import { IsString, IsNumber, IsOptional, IsArray, Min, IsEthereumAddress } from 'class-validator';
 
 export class CreateLandDto {
   @IsString()
@@ -11,11 +11,16 @@ export class CreateLandDto {
   @IsString()
   location: string;
 
-  //@IsNumber()
-  //price: number;
+  @IsNumber()
+  @Min(0)
+  surface: number;
+
+  @IsNumber()
+  @Min(1)
+  totalTokens: number;
 
   @IsString()
-  ownerId: string;
+  pricePerToken: string;
 
   @IsOptional()
   @IsNumber()
@@ -37,4 +42,8 @@ export class CreateLandDto {
   @IsArray()
   @IsString({ each: true })
   imageCIDs?: string[];
+
+  // Champ ajouté automatiquement par le guard
+  ownerId: string;
+
 }

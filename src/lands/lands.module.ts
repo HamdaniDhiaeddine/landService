@@ -10,6 +10,9 @@ import { IpfsModule } from '../ipfs/ipfs.module'; // ✅ Import IpfsModule
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { ConfigService } from '@nestjs/config';
 import { SERVICES } from 'src/constants/service';
+import { BlockchainModule } from 'src/blockchain/blockchain.module';
+import { RelayerService } from 'src/blockchain/services/relayer.service';
+import { Validation, ValidationSchema } from './schemas/validation.schema';
 
 @Module({
   imports: [
@@ -27,13 +30,16 @@ import { SERVICES } from 'src/constants/service';
       },
     ]),
     MongooseModule.forFeature([{ name: Land.name, schema: LandSchema }]),
+    MongooseModule.forFeature([{ name: Validation.name, schema: ValidationSchema }]),
     LocationModule,
     AuthModule,
     EncryptionModule,
-    IpfsModule, // ✅ Now LandsModule can use IpfsService
+    IpfsModule, 
+    BlockchainModule, 
+    
   ],
   controllers: [LandController],
-  providers: [LandService],
+  providers: [LandService, RelayerService],
 
 })
 export class LandModule {}

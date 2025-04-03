@@ -55,4 +55,14 @@ export class IpfsService {
       return false;
     }
   }
+
+  async uploadComment(comment: string): Promise<string> {
+    try {
+      const buffer = Buffer.from(comment, 'utf-8');
+      return await this.uploadFile(buffer);
+    } catch (error) {
+      this.logger.error('Failed to upload comment to IPFS', error.stack);
+      throw new InternalServerErrorException('Failed to upload comment to IPFS: ' + error.message);
+    }
+  }
 }
