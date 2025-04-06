@@ -179,7 +179,7 @@ export class RelayerService {
     }
 
     // Méthode utilitaire pour vérifier si une adresse est un validateur
-    async isValidator(address: string): Promise<boolean> {
+   /* async isValidator(address: string): Promise<boolean> {
         try {
             const landRegistry = this.blockchainService.getLandRegistry();
             if (!landRegistry) {
@@ -192,5 +192,5 @@ export class RelayerService {
             this.logger.error('Error checking validator status:', error);
             return false;
         }
-    }
+    }*/
 }

@@ -17,12 +17,6 @@ import { ValidatorType } from 'src/blockchain/interfaces/validation.interface';
     @Prop({ required: true })
     validator: string;
   
-    @Prop({
-      required: true,
-      enum: Object.values(ValidatorType), // Utilisez l'enum ValidatorType
-      type: Number // Les enums TypeScript sont souvent représentés par des nombres
-    })
-    validatorType: ValidatorType; // Remplacez validatorRole par validatorType
   
     @Prop({ required: true })
     timestamp: number;
