@@ -14,6 +14,8 @@ import { Logger } from '@nestjs/common';
 import { RelayerService } from 'src/blockchain/services/relayer.service';
 import { ValidateLandDto } from './dto/validate-land.dto';
 import { BlockchainService } from 'src/blockchain/services/blockchain.service';
+import { ValidationRequest, ValidationResponse } from 'src/blockchain/interfaces/validation.interface';
+import { ethers } from 'ethers';
 
 
 @Controller('lands')
@@ -142,8 +144,6 @@ export class LandController {
     res.type('application/octet-stream').send(fileBuffer);
   }
 
-
-
   @Get('blockchain/all')
   async getAllLandsFromBlockchain() {
     try {
@@ -158,6 +158,39 @@ export class LandController {
         success: false,
         error: error.message,
         message: 'Failed to retrieve lands from blockchain'
+      };
+    }
+  }
+  @Get('blockchain-status')
+  async getBlockchainStatus() {
+    try {
+      const provider = this.blockchainService.getProvider();
+      const network = await provider.getNetwork();
+      const blockNumber = await provider.getBlockNumber();
+      const relayerAddress = await this.relayerService.getRelayerAddress();
+      const balance = await provider.getBalance(relayerAddress);
+
+      return {
+        success: true,
+        data: {
+          network: {
+            name: network.name,
+            chainId: network.chainId
+          },
+          blockNumber,
+          relayer: {
+            address: relayerAddress,
+            balance: ethers.formatEther(balance)
+          },
+          contracts: {
+            landRegistry: this.blockchainService.getLandRegistry().target
+          }
+        }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
       };
     }
   }
@@ -259,5 +292,22 @@ export class LandController {
   @Get('verify-land/:id')
   async verifyLand(@Param('id') id: string) {
     return await this.blockchainService.verifyLand(Number(id));
+  }
+  @Post('validate')
+  /* @RequirePermissions({
+     resource: Resource.LAND,
+     actions: ['validate_land']
+   })*/
+  async validateLand(
+    @Body() validateRequest: ValidationRequest,
+    @Req() req: Request
+  ): Promise<ValidationResponse> {
+    const user = (req as any).user as JWTPayload;
+
+    if (!user.ethAddress) {
+      throw new BadRequestException('Ethereum address is required to validate land');
+    }
+
+    return this.landService.validateLand(validateRequest, user);
   }
 }

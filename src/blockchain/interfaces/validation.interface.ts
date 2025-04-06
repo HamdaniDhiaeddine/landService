@@ -4,6 +4,11 @@ export enum ValidatorType {
   GEOMETRE = 1,
   EXPERT_JURIDIQUE = 2
 }
+export enum ValidationStatus {
+  EnAttente,
+  Valide,
+  Rejete
+}
 
 // Les statuts possibles d'une validation de terrain
 export enum LandValidationStatus {
@@ -16,7 +21,7 @@ export enum LandValidationStatus {
 
 // Interface de base pour une validation
 export interface Validation {
-  validator: string;          // Adresse ethereum du validateur
+  validator: string;          // Adresse Ethereum du validateur
   timestamp: number;          // Timestamp Unix
   cidComments: string;        // CID IPFS des commentaires
   validatorType: ValidatorType;
@@ -41,38 +46,8 @@ export interface ValidationRequest {
   isValid: boolean;         // Décision de validation
 }
 
-// Interface pour suivre la progression des validations
-export interface ValidationProgress {
-  total: number;           // Nombre total de validations requises
-  completed: number;       // Nombre de validations effectuées
-  percentage: number;      // Pourcentage de completion
-  validations: {
-    type: ValidatorType;   // Type de validateur
-    validated: boolean;    // Si validé ou non
-    timestamp?: number;    // Quand validé
-    validator?: string;    // Qui a validé
-  }[];
-}
-
-// Interface pour la réponse de validation
 
 
-// Interface pour les métadonnées de validation stockées sur IPFS
-export interface ValidationMetadata {
-  text: string;              // Commentaire
-  validator: string;         // Adresse du validateur
-  validatorRole: string;     // Rôle du validateur
-  validatorEmail?: string;   // Email du validateur
-  landId: string;           // ID du terrain
-  timestamp: number;        // Timestamp Unix
-  isValid: boolean;         // Décision
-  validationType: string;   // Type de validation
-}
-export interface ValidateLandDto {
-  landId: string;
-  comment: string;
-  isValid: boolean;
-}
 
 export interface ValidationResponse {
   success: boolean;
@@ -110,16 +85,53 @@ export interface ValidationResponse {
     };
   };
 }
+export interface ValidationMetadata {
+  text: string;
+  validator: string;
+  validatorRole: string;
+  validatorEmail?: string;
+  userId?: string;
+  landId: string;
+  timestamp: number;
+  isValid: boolean;
+  validationType: ValidatorType;
+}
 
 export interface ValidationDocument {
   _id?: string;
   landId: string;
   blockchainLandId: string;
   validator: string;
-  validatorRole: string;
+  validatorType: ValidatorType; // Champ obligatoire
   timestamp: number;
   cidComments: string;
   isValidated: boolean;
   txHash: string;
   blockNumber: number;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
+
+export interface ValidationProgressItem {
+  type: ValidatorType;
+  validated: boolean;
+  timestamp?: number;
+  validator?: string;
+}
+
+
+// Les interfaces de progression de validation
+export interface ValidationProgressValidation {
+  role: string;           // Changé de 'type' à 'role'
+  validated: boolean;
+  timestamp?: number;
+  validator?: string;
+}
+
+export interface ValidationProgress {
+  total: number;
+  completed: number;
+  percentage: number;
+  validations: ValidationProgressValidation[];
+}
+

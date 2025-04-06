@@ -53,51 +53,57 @@ export class RelayerService {
         };
     }> {
         const { landId, validatorAddress, cidComments, isValid } = params;
-        
+
         try {
             const blockchainId = Number(landId);
             if (isNaN(blockchainId) || blockchainId <= 0) {
                 throw new Error(`Invalid blockchain land ID: ${landId}`);
             }
-    
+
             this.logger.log(`Relaying validation for land ID: ${blockchainId}`, {
                 validator: validatorAddress,
                 isValid
             });
-    
+
             // Vérification du solde du relayer
             const provider = this.blockchainService.getProvider();
             const balance = await provider.getBalance(this.relayerWallet.address);
             const minimumBalance = ethers.parseEther('0.1');
-    
+
             if (balance < minimumBalance) {
                 this.logger.error(`Relayer balance too low: ${ethers.formatEther(balance)} ETH`);
                 throw new Error('Relayer balance too low');
             }
-    
+
             // Vérifications des paramètres
             if (!cidComments || cidComments.trim() === '') {
                 throw new Error('CID comments cannot be empty');
             }
-    
+
             if (!ethers.isAddress(validatorAddress)) {
                 throw new Error('Invalid validator address');
             }
-    
+
             // Récupération et connexion du contrat
             const landRegistry = this.blockchainService.getLandRegistry();
+            if (!landRegistry) {
+                throw new Error('LandRegistry contract is not initialized');
+            }
+
             const connectedContract = landRegistry.connect(this.relayerWallet) as Contract;
-    
+
             // Vérification que le terrain existe
             try {
-                const landDetails = await connectedContract.getAllLandDetails(blockchainId);
+                const landDetails = await connectedContract.getAllLandDetails(blockchainId, {
+                    provider: this.blockchainService.getProvider() // Assurez-vous que le fournisseur est défini ici
+                });
                 if (!landDetails[3]) { // isRegistered est à l'index 3
                     throw new Error(`Land ID ${blockchainId} exists but is not registered`);
                 }
             } catch (error) {
                 throw new Error(`Land ID ${blockchainId} does not exist or is invalid: ${error.message}`);
             }
-    
+
             // Préparation et envoi de la transaction
             const tx = await connectedContract.validateLand(
                 blockchainId,
@@ -106,12 +112,12 @@ export class RelayerService {
                 validatorAddress,
                 { gasLimit: 300000 }
             );
-    
+
             this.logger.log('Validation transaction sent:', tx.hash);
-    
+
             // Attente de la confirmation
             const receipt = await tx.wait();
-    
+
             // Vérification de l'événement
             const validationAddedEvent = receipt.logs.find(log => {
                 try {
@@ -124,11 +130,11 @@ export class RelayerService {
                     return false;
                 }
             });
-    
+
             if (!validationAddedEvent) {
                 this.logger.warn('ValidationAdded event not found in transaction receipt');
             }
-    
+
             // Retourner le résultat
             return {
                 receipt,
@@ -141,21 +147,21 @@ export class RelayerService {
                     timestamp: new Date().toISOString()
                 }
             };
-    
+
         } catch (error) {
             this.logger.error('Error in relayed validation:', {
                 error: error.message,
                 landId,
                 validator: validatorAddress
             });
-    
+
             if (error.message.includes('UnauthorizedValidator')) {
                 throw new Error(`Validator ${validatorAddress} is not authorized`);
             }
             if (error.message.includes('ValidatorAlreadyValidated')) {
                 throw new Error(`Validator ${validatorAddress} has already validated this land`);
             }
-    
+
             throw new Error(`Validation relayée échouée: ${error.message}`);
         }
     }
@@ -176,7 +182,12 @@ export class RelayerService {
     async isValidator(address: string): Promise<boolean> {
         try {
             const landRegistry = this.blockchainService.getLandRegistry();
-            return await landRegistry.validators(address);
+            if (!landRegistry) {
+                throw new Error('LandRegistry contract is not initialized');
+            }
+            return await landRegistry.validators(address, {
+                provider: this.blockchainService.getProvider() // Assurez-vous que le fournisseur est défini ici
+            });
         } catch (error) {
             this.logger.error('Error checking validator status:', error);
             return false;

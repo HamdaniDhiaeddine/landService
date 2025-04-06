@@ -128,15 +128,15 @@ export class BlockchainService implements OnModuleInit {
   private async verifyContracts() {
     try {
       const registryOwner = await this.landRegistry.owner();
-      console.log('LandRegistry connected at:', this.landRegistry.target);
+      console.log('LandRegistry connected at:', this.landRegistry.address);
       console.log('LandRegistry owner:', registryOwner);
 
       const tokenName = await this.landToken.name();
-      console.log('LandToken connected at:', this.landToken.target);
+      console.log('LandToken connected at:', this.landToken.address);
       console.log('Token name:', tokenName);
 
       const marketplaceLandToken = await this.marketplace.landToken();
-      console.log('Marketplace connected at:', this.marketplace.target);
+      console.log('Marketplace connected at:', this.marketplace.address);
       console.log('Marketplace LandToken:', marketplaceLandToken);
     } catch (error) {
       console.error('Contract verification failed:', error);
@@ -618,4 +618,6 @@ export class BlockchainService implements OnModuleInit {
       };
     }
   }
+
+  
 }
