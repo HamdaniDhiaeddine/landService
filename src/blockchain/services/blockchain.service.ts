@@ -1,10 +1,10 @@
-import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Contract, JsonRpcProvider, Wallet, Interface, InterfaceAbi, ethers } from 'ethers';
-import { blockchainConfig } from '../config/blockchain.config';
 import LandRegistryJSON from '../abis/LandRegistry.json';
 import LandTokenJSON from '../abis/LandToken.json';
 import LandTokenMarketplaceJSON from '../abis/LandTokenMarketplace.json';
 import { ConfigService } from '@nestjs/config';
+
 
 import axios from 'axios';
 
@@ -41,6 +41,7 @@ interface LandResponse {
 
 @Injectable()
 export class BlockchainService implements OnModuleInit {
+  private readonly logger = new Logger(BlockchainService.name);
   private provider: JsonRpcProvider;
   private signer: Wallet;
   private landRegistry: Contract;
@@ -128,15 +129,15 @@ export class BlockchainService implements OnModuleInit {
   private async verifyContracts() {
     try {
       const registryOwner = await this.landRegistry.owner();
-      console.log('LandRegistry connected at:', this.landRegistry.address);
+      console.log('LandRegistry connected at:', this.landRegistry.target);
       console.log('LandRegistry owner:', registryOwner);
 
       const tokenName = await this.landToken.name();
-      console.log('LandToken connected at:', this.landToken.address);
+      console.log('LandToken connected at:', this.landToken.target);
       console.log('Token name:', tokenName);
 
       const marketplaceLandToken = await this.marketplace.landToken();
-      console.log('Marketplace connected at:', this.marketplace.address);
+      console.log('Marketplace connected at:', this.marketplace.target);
       console.log('Marketplace LandToken:', marketplaceLandToken);
     } catch (error) {
       console.error('Contract verification failed:', error);
@@ -195,6 +196,7 @@ export class BlockchainService implements OnModuleInit {
       throw new Error(`Erreur lors de l'enregistrement du terrain: ${error.message}`);
     }
   }
+
 
   async getAllLands() {
     try {
@@ -620,4 +622,172 @@ export class BlockchainService implements OnModuleInit {
   }
 
   
+  async validateLandWithRelayer(
+    params: {
+        landId: string;
+        validatorAddress: string;
+        cidComments: string;
+        isValid: boolean;
+    }
+): Promise<{
+    receipt: any;
+    validationDetails: {
+        landId: string;
+        validator: string;
+        isValid: boolean;
+        txHash: string;
+        blockNumber: number;
+        timestamp: string;
+    };
+}> {
+    const { landId, validatorAddress, cidComments, isValid } = params;
+
+    try {
+        const blockchainId = Number(landId);
+        if (isNaN(blockchainId) || blockchainId <= 0) {
+            throw new Error(`Invalid blockchain land ID: ${landId}`);
+        }
+
+        // Vérifier que le contrat est bien initialisé
+        if (!this.landRegistry || !this.landRegistry.runner?.provider) {
+            throw new Error('Contract not properly initialized');
+        }
+
+        this.logger.log('Starting validation process', {
+            landId: blockchainId,
+            validator: validatorAddress,
+            isValid,
+            timestamp: '2025-04-06 01:46:45',
+            userLogin: 'dalikhouaja008'
+        });
+
+        /* Temporairement commenté en attendant l'ajout des validators
+        // Vérification des rôles
+        const [isRelayer, isValidator] = await Promise.all([
+            this.landRegistry.relayers(this.signer.address),
+            this.landRegistry.validators(this.signer.address)
+        ]);
+
+        this.logger.log('Role verification', {
+            address: this.signer.address,
+            isRelayer,
+            isValidator,
+            timestamp: '2025-04-06 01:46:45',
+            userLogin: 'dalikhouaja008'
+        });
+
+        if (!isRelayer && !isValidator) {
+            throw new Error('Address is neither a relayer nor a validator');
+        }
+
+        // Vérification du validateur
+        const validatorIsAuthorized = await this.landRegistry.validators(validatorAddress);
+        
+        this.logger.log('Validator authorization check', {
+            validator: validatorAddress,
+            isAuthorized: validatorIsAuthorized,
+            timestamp: '2025-04-06 01:46:45',
+            userLogin: 'dalikhouaja008'
+        });
+
+        if (!validatorIsAuthorized) {
+            throw new Error('Validator is not authorized');
+        }
+        */
+
+        // Vérifications des paramètres
+        if (!cidComments || cidComments.trim() === '') {
+            throw new Error('CID comments cannot be empty');
+        }
+
+        if (!ethers.isAddress(validatorAddress)) {
+            throw new Error('Invalid validator address');
+        }
+
+        // Vérification que le terrain existe
+        const landDetails = await this.landRegistry.getAllLandDetails(blockchainId);
+        
+        this.logger.log('Land details retrieved', {
+            landId: blockchainId,
+            isRegistered: landDetails[3],
+            owner: landDetails[2],
+            timestamp: '2025-04-06 01:46:45',
+            userLogin: 'dalikhouaja008'
+        });
+
+        if (!landDetails[3]) {
+            throw new Error(`Land ID ${blockchainId} exists but is not registered`);
+        }
+
+        // Envoi de la transaction
+        const tx = await this.landRegistry.validateLand(
+            blockchainId,
+            cidComments,
+            isValid,
+            validatorAddress,
+            { 
+                gasLimit: BigInt(500000)
+            }
+        );
+
+        this.logger.log('Transaction sent', {
+            hash: tx.hash,
+            from: this.signer.address,
+            to: this.landRegistry.target,
+            gasLimit: '500000',
+            timestamp: '2025-04-06 01:46:45',
+            userLogin: 'dalikhouaja008'
+        });
+
+        // Attente de la confirmation
+        const receipt = await tx.wait();
+
+        if (receipt.status === 0) {
+            throw new Error('Transaction failed on-chain');
+        }
+
+        this.logger.log('Transaction confirmed', {
+            hash: receipt.hash,
+            blockNumber: receipt.blockNumber,
+            gasUsed: receipt.gasUsed.toString(),
+            status: receipt.status,
+            timestamp: '2025-04-06 01:46:45',
+            userLogin: 'dalikhouaja008'
+        });
+
+        return {
+            receipt,
+            validationDetails: {
+                landId: blockchainId.toString(),
+                validator: validatorAddress,
+                isValid,
+                txHash: receipt.hash,
+                blockNumber: receipt.blockNumber,
+                timestamp: new Date().toISOString()
+            }
+        };
+
+    } catch (error) {
+        this.logger.error('Validation failed', {
+            error: error.message,
+            landId,
+            validator: validatorAddress,
+            timestamp: '2025-04-06 01:46:45',
+            userLogin: 'dalikhouaja008'
+        });
+
+        if (error.message.includes('UnauthorizedValidator')) {
+            throw new Error(`Validator ${validatorAddress} is not authorized`);
+        }
+        if (error.message.includes('ValidatorAlreadyValidated')) {
+            throw new Error(`Validator ${validatorAddress} has already validated this land`);
+        }
+        if (error.message.includes('revert')) {
+            const reason = error.reason || 'Unknown reason';
+            throw new Error(`Smart contract reverted: ${reason}`);
+        }
+
+        throw new Error(`Validation failed: ${error.message}`);
+    }
+}
 }

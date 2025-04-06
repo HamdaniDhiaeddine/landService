@@ -231,7 +231,7 @@ export class LandService {
         landId: blockchainLandId,
         timestamp: Math.floor(Date.now() / 1000),
         isValid: request.isValid,
-        validationType: user.role as unknown as ValidatorType // Cast direct
+        validationType: this.getValidatorTypeEnum(user.role) 
       };
 
       this.logger.log('Creating validation metadata', {
@@ -248,7 +248,7 @@ export class LandService {
       this.logger.log('Successfully uploaded comments to IPFS', { cidComments });
 
       // Valider via le relayer
-      const validationResult = await this.relayerService.validateLandWithRelayer({
+      const validationResult = await this.blockchainService.validateLandWithRelayer({
         landId: blockchainLandId,
         validatorAddress: user.ethAddress,
         cidComments,
@@ -320,7 +320,20 @@ export class LandService {
     }
   }
 
-  // Méthodes auxiliaires
+  private getValidatorTypeEnum(role: string): ValidatorType {
+    const roleMap = {
+        'NOTAIRE': ValidatorType.NOTAIRE,
+        'GEOMETRE': ValidatorType.GEOMETRE,
+        'EXPERT_JURIDIQUE': ValidatorType.EXPERT_JURIDIQUE
+    };
+    
+    const validatorType = roleMap[role];
+    if (validatorType === undefined) {
+        throw new Error(`Invalid validator role: ${role}`);
+    }
+    
+    return validatorType;
+}
 
   async findOne(id: string): Promise<Land> {
     const land = await this.landModel.findById(id).exec();
@@ -346,6 +359,8 @@ export class LandService {
       throw new InternalServerErrorException('Failed to create validation');
     }
   }
+
+
   private async calculateValidationProgress(blockchainLandId: string): Promise<ValidationProgress> {
     const validations = await this.validationModel.find({ blockchainLandId }).exec();
 

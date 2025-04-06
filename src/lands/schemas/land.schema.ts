@@ -42,10 +42,10 @@ export class Land {
   @Prop()
   longitude?: number;
 
-  @Prop({ 
-    required: true, 
+  @Prop({
+    required: true,
     enum: LandValidationStatus,
-    default: LandValidationStatus.PENDING_VALIDATION 
+    default: LandValidationStatus.PENDING_VALIDATION
   })
   status: LandValidationStatus;
 
@@ -61,8 +61,11 @@ export class Land {
   @Prop()
   blockchainTxHash: string;
 
-  @Prop()
-  blockchainId: string;
+  @Prop({
+    type: String,
+    required: true,
+  })
+  blockchainLandId;
 
   @Prop({
     type: [{
