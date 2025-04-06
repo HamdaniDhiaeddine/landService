@@ -1,4 +1,4 @@
-import { ValidationStatus } from "./validator.interface";
+import { ValidationStatus } from "./validation.interface";
 
 
 export interface Land {

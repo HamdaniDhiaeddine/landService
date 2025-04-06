@@ -1,14 +1,13 @@
+// src/lands/schemas/validation.schema.ts
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import { ValidatorType } from 'src/blockchain/interfaces/validation.interface';
 
-export type ValidationDocument = Validation & Document;
-
 @Schema({
     timestamps: true,
     collection: 'validations'
-})
-export class Validation {
+  })
+  export class Validation {
     @Prop({ required: true })
     landId: string;
   
@@ -18,14 +17,18 @@ export class Validation {
     @Prop({ required: true })
     validator: string;
   
+    @Prop({
+      required: true,
+      enum: Object.values(ValidatorType), // Utilisez l'enum ValidatorType
+      type: Number // Les enums TypeScript sont souvent représentés par des nombres
+    })
+    validatorType: ValidatorType; // Remplacez validatorRole par validatorType
+  
     @Prop({ required: true })
     timestamp: number;
   
     @Prop({ required: true })
     cidComments: string;
-  
-    @Prop({ required: true, enum: ValidatorType })
-    validatorType: number;
   
     @Prop({ required: true })
     isValidated: boolean;
@@ -35,6 +38,6 @@ export class Validation {
   
     @Prop({ required: true })
     blockNumber: number;
-}
-
-export const ValidationSchema = SchemaFactory.createForClass(Validation);
+  }
+  
+  export const ValidationSchema = SchemaFactory.createForClass(Validation);

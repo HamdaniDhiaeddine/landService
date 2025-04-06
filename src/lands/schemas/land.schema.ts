@@ -1,4 +1,14 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { ValidatorType, LandValidationStatus } from 'src/blockchain/interfaces/validation.interface';
+
+// Interface pour la structure de validation
+interface ValidationEntry {
+  validator: string;
+  validatorType: ValidatorType;
+  timestamp: number;
+  isValidated: boolean;
+  cidComments: string;
+}
 
 @Schema({ timestamps: true })
 export class Land {
@@ -24,7 +34,7 @@ export class Land {
   ownerId: string;
 
   @Prop({ required: true })
-  ownerAddress: string; // Adresse Ethereum du propriétaire
+  ownerAddress: string;
 
   @Prop()
   latitude?: number;
@@ -34,10 +44,10 @@ export class Land {
 
   @Prop({ 
     required: true, 
-    enum: ['pending_validation', 'validated', 'rejected', 'tokenized'], 
-    default: 'pending_validation' 
+    enum: LandValidationStatus,
+    default: LandValidationStatus.PENDING_VALIDATION 
   })
-  status: string;
+  status: LandValidationStatus;
 
   @Prop({ type: [String], default: [] })
   ipfsCIDs: string[];
@@ -52,7 +62,20 @@ export class Land {
   blockchainTxHash: string;
 
   @Prop()
-  blockchainLandId: string;
+  blockchainId: string;
+
+  @Prop({
+    type: [{
+      validator: String,
+      validatorType: { type: Number, enum: ValidatorType },
+      timestamp: Number,
+      isValidated: Boolean,
+      cidComments: String
+    }],
+    default: []
+  })
+  validations: ValidationEntry[];
 }
 
+export type LandDocument = Land & Document;
 export const LandSchema = SchemaFactory.createForClass(Land);

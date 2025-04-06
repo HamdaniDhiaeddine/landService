@@ -1,14 +1,19 @@
-import { IsString, IsBoolean, IsNotEmpty } from 'class-validator';
-
+import { IsString, IsBoolean, IsNotEmpty, IsOptional } from 'class-validator';
 
 export class ValidateLandDto {
-
     @IsString()
     @IsNotEmpty()
-    cidComments: string;
-
+    comment: string;
 
     @IsBoolean()
     @IsNotEmpty()
     isValid: boolean;
+
+    @IsString()
+    @IsOptional()
+    landId?: string;
+
+    @IsString()
+    @IsOptional()
+    txHash?: string;
 }
