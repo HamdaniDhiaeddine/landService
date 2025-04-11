@@ -1,4 +1,18 @@
-import { IsString, IsNumber, IsOptional, IsArray, Min, IsEthereumAddress } from 'class-validator';
+// Ajout du champ fileBuffers dans le DTO
+import { Type } from 'class-transformer';
+import { IsString, IsNumber, IsOptional, IsArray, Min, IsEthereumAddress, IsObject, ValidateNested } from 'class-validator';
+import { AmenitiesDto } from './Amenities.dto';
+
+export class FileBufferDto {
+  buffer: Buffer;
+  originalname: string;
+  mimetype: string;
+}
+
+export class FileBuffersDto {
+  documents: FileBufferDto[];
+  images: FileBufferDto[];
+}
 
 export class CreateLandDto {
   @IsString()
@@ -11,27 +25,23 @@ export class CreateLandDto {
   @IsString()
   location: string;
 
-  @IsNumber()
-  @Min(0)
-  surface: number;
-
-  @IsNumber()
-  @Min(1)
-  totalTokens: number;
-
   @IsString()
-  pricePerToken: string;
+  //@Min(0)
+  surface: string;
 
   @IsOptional()
-  @IsNumber()
-  latitude?: number;
+  @IsString()
+  latitude?: string;
 
   @IsOptional()
-  @IsNumber()
-  longitude?: number;
+  @IsString()
+  longitude?: string;
 
   @IsString()
   status: string;
+  
+  @IsString()
+  landtype: string;
 
   @IsOptional()
   @IsArray()
@@ -43,7 +53,16 @@ export class CreateLandDto {
   @IsString({ each: true })
   imageCIDs?: string[];
 
+  // Nouveau champ pour stocker les buffers
+  @IsOptional()
+  fileBuffers?: FileBuffersDto;
+
   // Champ ajouté automatiquement par le guard
   ownerId: string;
 
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => AmenitiesDto)
+  amenities?: AmenitiesDto;
 }

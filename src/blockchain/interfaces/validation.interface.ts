@@ -16,7 +16,17 @@ export enum LandValidationStatus {
   PARTIALLY_VALIDATED = 'partially_validated',
   VALIDATED = 'validated',
   REJECTED = 'rejected',
-  TOKENIZED = 'tokenized'
+  TOKENIZED = 'tokenized',
+  AVAILABLE = 'available',
+  SOLD = 'sold',
+  RESERVED = 'reserved',
+}
+
+export enum LandType{
+  RESIDENTIAL = 'residential',
+  COMMERCIAL = 'commercial',
+  INDUSTRIAL = 'industrial',
+  AGRICULTURAL = 'agricultural',
 }
 
 // Interface de base pour une validation
@@ -133,5 +143,14 @@ export interface ValidationProgress {
   completed: number;
   percentage: number;
   validations: ValidationProgressValidation[];
+}
+
+// Interface pour la structure de validation
+export interface ValidationEntry {
+  validator: string;
+  validatorType: ValidatorType;
+  timestamp: number;
+  isValidated: boolean;
+  cidComments: string;
 }
 
