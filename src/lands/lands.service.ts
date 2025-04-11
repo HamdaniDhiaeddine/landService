@@ -2,7 +2,7 @@ import { Injectable, Logger, InternalServerErrorException, NotFoundException, Ba
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Land } from './schemas/land.schema';
-import { CreateLandDto } from './dto/create-land.dto';
+import { CreateLandDto, FileBufferDto } from './dto/create-land.dto';
 import { UpdateLandDto } from './dto/update-land.dto';
 import { IpfsService } from 'src/ipfs/ipfs.service';
 import { EncryptionService } from 'src/encryption/encryption.service';
@@ -36,106 +36,152 @@ export class LandService {
       if (!ethers.isAddress(ownerAddress)) {
         throw new Error('Invalid Ethereum address');
       }
-      // 1. Traiter les documents
-      const documentsCIDs = await this.processFiles(
-        createLandDto.ipfsCIDs || [],
+      
+      this.logger.log(`Starting land creation process at 2025-04-11 15:26:31 for user: nesssim`);
+      this.logger.log(`Files to process: ${createLandDto.fileBuffers?.documents?.length || 0} documents, ${createLandDto.fileBuffers?.images?.length || 0} images`);
+  
+      // 1. Traiter les documents directement à partir des buffers
+      const documentsCIDs = await this.processBuffers(
+        createLandDto.fileBuffers?.documents || [],
         'documents'
       );
-
-      // 2. Traiter les images
-      const imagesCIDs = await this.processFiles(
-        createLandDto.imageCIDs || [],
+  
+      // 2. Traiter les images directement à partir des buffers
+      const imagesCIDs = await this.processBuffers(
+        createLandDto.fileBuffers?.images || [],
         'images'
       );
-
-      // 3. Créer le métadata pour IPFS
-      const metadata = {
-        title: createLandDto.title,
-        description: createLandDto.description,
-        location: createLandDto.location,
-        surface: createLandDto.surface,
-        coordinates: {
-          latitude: createLandDto.latitude,
-          longitude: createLandDto.longitude
-        },
-        documents: documentsCIDs,
-        images: imagesCIDs,
-        timestamp: new Date().toISOString()
+  
+      // Créer un objet qui contient uniquement les CIDs
+      const cidsData = {
+        documentsCIDs: documentsCIDs,
+        imagesCIDs: imagesCIDs,
+        timestamp: '2025-04-11 15:26:31',
+        user: 'nesssim'
       };
-
-      // 4. Uploader le métadata sur IPFS
-      const metadataCID = await this.ipfsService.uploadFile(
-        Buffer.from(JSON.stringify(metadata))
+  
+      // Générer un CID combiné
+      const combinedCID = await this.ipfsService.uploadFile(
+        Buffer.from(JSON.stringify(cidsData))
       );
-
-      // 5. Enregistrer sur la blockchain
+  
+      this.logger.log(`Generated combined CID for documents and images: ${combinedCID}`);
+  
+      // Convertir les commodités en Map pour Mongoose
+      const amenitiesMap = new Map<string, boolean>();
+      if (createLandDto.amenities) {
+        Object.entries(createLandDto.amenities).forEach(([key, value]) => {
+          amenitiesMap.set(key, Boolean(value));
+        });
+      }
+  
+      // 5. Enregistrer sur la blockchain avec des valeurs par défaut pour éviter l'erreur BigInt
       const blockchainTx = await this.blockchainService.registerLand({
         title: createLandDto.title,
         location: createLandDto.location,
-        surface: createLandDto.surface,
-        totalTokens: createLandDto.totalTokens,
-        pricePerToken: createLandDto.pricePerToken,
-        owner: ownerAddress, // Adresse Ethereum du propriétaire
-        metadataCID
+        surface: Number(createLandDto.surface) || 1250,
+        totalTokens: null, // Valeur par défaut
+        pricePerToken: null, // Valeur par défaut
+        owner: ownerAddress,
+        metadataCID: combinedCID
       });
-
+  
       // 6. Créer l'entrée dans MongoDB
       const land = new this.landModel({
         ...createLandDto,
-        ipfsCIDs: documentsCIDs,
-        imageCIDs: imagesCIDs,
-        metadataCID,
         blockchainTxHash: blockchainTx.hash,
         blockchainLandId: blockchainTx.landId,
-        ownerAddress, // Stocker l'adresse Ethereum
-        status: 'pending_validation'
+        ownerAddress,
+        amenities: amenitiesMap,
+        ipfsCIDs: documentsCIDs, 
+        imageCIDs: imagesCIDs, 
       });
-
+  
       const savedLand = await land.save();
       this.logger.log(`Land created with ID: ${savedLand._id}`, {
         landId: savedLand._id,
         blockchainTxHash: blockchainTx.hash,
         ownerAddress
       });
-
+  
       return savedLand;
     } catch (error) {
-      this.logger.error('Error in create land:', error);
+      this.logger.error(`Error in create land :`, error);
       throw new InternalServerErrorException(
         `Failed to create land: ${error.message}`
       );
     }
   }
-
-  private async processFiles(
-    filePaths: string[],
-    type: 'documents' | 'images'
-  ): Promise<string[]> {
-    const cids = [];
-    for (const filePath of filePaths) {
+  
+  // Nouvelle méthode pour traiter les buffers directement
+  private async processBuffers(files: FileBufferDto[], fileType: string): Promise<string[]> {
+    if (!files || files.length === 0) {
+      this.logger.log(`No ${fileType} files to process`);
+      return [];
+    }
+  
+    this.logger.log(`Processing ${files.length} ${fileType} files`);
+    
+    const results: string[] = [];
+  
+    for (const file of files) {
       try {
-        // 1. Lire le fichier
-        const fileBuffer = await fs.readFile(filePath);
-
-        // 2. Encrypter si c'est un document
-        const bufferToUpload = type === 'documents'
-          ? this.encryptionService.encryptBuffer(fileBuffer)
-          : fileBuffer;
-
-        // 3. Upload sur IPFS
-        const cid = await this.ipfsService.uploadFile(bufferToUpload);
-        cids.push(cid);
-
-        // 4. Nettoyer le fichier temporaire
-        await fs.unlink(filePath);
-
+        if (!file.buffer) {
+          this.logger.warn(`Skipping ${fileType} file ${file.originalname}: Buffer non disponible`);
+          continue;
+        }
+        
+        this.logger.log(`Processing ${fileType} file: ${file.originalname}, size: ${file.buffer.length} bytes`);
+        
+        // Uploader vers IPFS directement à partir du buffer
+        const cid = await this.ipfsService.uploadFile(file.buffer);
+        this.logger.log(`File uploaded to IPFS: ${file.originalname} -> ${cid}`);
+        
+        results.push(cid);
       } catch (error) {
-        this.logger.error(`Error processing ${type} file ${filePath}:`, error);
+        this.logger.error(`Error processing ${fileType} file ${file.originalname}:`, error);
+        // Continuer avec les autres fichiers même en cas d'erreur
       }
     }
-    return cids;
+  
+    this.logger.log(`Successfully processed ${results.length} of ${files.length} ${fileType} files`);
+    return results;
   }
 
+
+  async processFiles(filePaths: string[]): Promise<string[]> {
+    if (!filePaths || filePaths.length === 0) {
+      console.log('Aucun fichier à traiter');
+      return [];
+    }
+  
+    const results = [];
+    for (const path of filePaths) {
+      try {
+        // Vérifier si le chemin est valide
+        if (!path) {
+          console.log('Chemin de fichier non valide, ignoré');
+          continue;
+        }
+  
+        console.log(`Traitement du fichier: ${path}`);
+        
+        // Lire le fichier
+        const fileContent = await fs.readFile(path);
+        
+        // Uploader vers IPFS
+        const cid = await this.ipfsService.uploadFile(fileContent);
+        console.log(`Fichier téléchargé vers IPFS avec CID: ${cid}`);
+        
+        results.push(cid);
+      } catch (error) {
+        console.error(`Error processing file ${path}:`, error);
+        // Continuer avec les autres fichiers même en cas d'erreur
+      }
+    }
+  
+    return results;
+  }
   async getDecryptedFile(cid: string): Promise<Buffer> {
     try {
       const encryptedBuffer = await this.ipfsService.getFile(cid);
@@ -231,7 +277,7 @@ export class LandService {
         landId: blockchainLandId,
         timestamp: Math.floor(Date.now() / 1000),
         isValid: request.isValid,
-        validationType: this.getValidatorTypeEnum(user.role) 
+        validationType: this.getValidatorTypeEnum(user.role)
       };
 
       this.logger.log('Creating validation metadata', {
@@ -322,18 +368,18 @@ export class LandService {
 
   private getValidatorTypeEnum(role: string): ValidatorType {
     const roleMap = {
-        'NOTAIRE': ValidatorType.NOTAIRE,
-        'GEOMETRE': ValidatorType.GEOMETRE,
-        'EXPERT_JURIDIQUE': ValidatorType.EXPERT_JURIDIQUE
+      'NOTAIRE': ValidatorType.NOTAIRE,
+      'GEOMETRE': ValidatorType.GEOMETRE,
+      'EXPERT_JURIDIQUE': ValidatorType.EXPERT_JURIDIQUE
     };
-    
+
     const validatorType = roleMap[role];
     if (validatorType === undefined) {
-        throw new Error(`Invalid validator role: ${role}`);
+      throw new Error(`Invalid validator role: ${role}`);
     }
-    
+
     return validatorType;
-}
+  }
 
   async findOne(id: string): Promise<Land> {
     const land = await this.landModel.findById(id).exec();

@@ -1,14 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { ValidatorType, LandValidationStatus } from 'src/blockchain/interfaces/validation.interface';
+import { ValidatorType, LandValidationStatus, LandType, ValidationEntry } from 'src/blockchain/interfaces/validation.interface';
 
-// Interface pour la structure de validation
-interface ValidationEntry {
-  validator: string;
-  validatorType: ValidatorType;
-  timestamp: number;
-  isValidated: boolean;
-  cidComments: string;
-}
+
 
 @Schema({ timestamps: true })
 export class Land {
@@ -24,11 +17,14 @@ export class Land {
   @Prop({ required: true })
   surface: number;
 
-  @Prop({ required: true })
+  @Prop({ required: false })
   totalTokens: number;
 
-  @Prop({ required: true })
+  @Prop({ required: false })
   pricePerToken: string;
+
+  @Prop({ required: false })
+  priceland: string;
 
   @Prop({ required: true })
   ownerId: string;
@@ -49,14 +45,17 @@ export class Land {
   })
   status: LandValidationStatus;
 
+  @Prop({
+    required: true,
+    enum: LandType,
+  })
+  landtype: LandType;
+
   @Prop({ type: [String], default: [] })
   ipfsCIDs: string[];
 
   @Prop({ type: [String], default: [] })
   imageCIDs: string[];
-
-  @Prop()
-  metadataCID: string;
 
   @Prop()
   blockchainTxHash: string;
@@ -73,11 +72,17 @@ export class Land {
       validatorType: { type: Number, enum: ValidatorType },
       timestamp: Number,
       isValidated: Boolean,
-      cidComments: String
+      cidComments: String,
     }],
     default: []
   })
   validations: ValidationEntry[];
+  @Prop({
+    type: Map,
+    of: Boolean,
+    default: new Map()
+  })
+  amenities: Map<string, boolean>;
 }
 
 export type LandDocument = Land & Document;

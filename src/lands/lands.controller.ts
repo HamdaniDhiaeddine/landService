@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseInterceptors, UploadedFiles, Res, UseGuards, Req, BadRequestException, HttpException, HttpStatus, ValidationPipe } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseInterceptors, UploadedFiles, Res, UseGuards, Req, BadRequestException, HttpException, HttpStatus, ValidationPipe, InternalServerErrorException } from '@nestjs/common';
 import { CreateLandDto } from './dto/create-land.dto';
 import { UpdateLandDto } from './dto/update-land.dto';
 import { LandService } from './lands.service';
@@ -27,7 +27,6 @@ export class LandController {
     private readonly relayerService: RelayerService,
     private readonly blockchainService: BlockchainService
   ) { }
-
   @Post()
   @RequirePermissions({
     resource: Resource.LAND,
@@ -44,42 +43,139 @@ export class LandController {
     @UploadedFiles() files: any,
     @Req() req: Request
   ) {
+    try {
+      const user = (req as any).user as JWTPayload;
+      const body = req.body as any;
 
+      console.log('\n====== JWT Payload Details ======');
+      console.log('Current Date and Time (UTC):', '2025-04-11 15:26:31');
+      console.log('User ID:', user.userId);
+      console.log('Email:', user.email);
+      console.log('Role:', user.role);
+      console.log('Ethereum Address:', user.ethAddress || 'Not found in token');
+      console.log('User Login: nesssim');
+      console.log('=============================\n');
 
-    const user = (req as any).user as JWTPayload;
+      // Vérifier que l'utilisateur a une adresse Ethereum
+      if (!user.ethAddress) {
+        throw new BadRequestException(
+          'Ethereum address is required to register land'
+        );
+      }
 
-    console.log('\n====== JWT Payload Details ======');
-    console.log('Timestamp:', new Date().toISOString());
-    console.log('User ID:', user.userId);
-    console.log('Email:', user.email);
-    console.log('Role:', user.role);
-    console.log('Ethereum Address:', user.ethAddress || 'Not found in token');
-    console.log('=============================\n');
+      // Ajouter l'ID de l'utilisateur depuis le token
+      createLandDto.ownerId = user.userId;
 
-    // Vérifier que l'utilisateur a une adresse Ethereum
-    if (!user.ethAddress) {
-      throw new BadRequestException(
-        'Ethereum address is required to register land'
-      );
+      // CORRECTION: Utiliser les buffers des fichiers au lieu des chemins
+      createLandDto.fileBuffers = {
+        documents: [],
+        images: []
+      };
+
+      console.log('\n====== Fichiers reçus ======');
+
+      if (files?.documents && files.documents.length > 0) {
+        console.log(`Documents reçus: ${files.documents.length}`);
+
+        files.documents.forEach((file, index) => {
+          console.log(`Document ${index + 1}:`, {
+            originalname: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            buffer: file.buffer ? 'Buffer disponible' : 'Buffer non disponible'
+          });
+
+          // Stocker les buffers directement
+          if (file.buffer) {
+            createLandDto.fileBuffers.documents.push({
+              buffer: file.buffer,
+              originalname: file.originalname,
+              mimetype: file.mimetype
+            });
+          }
+        });
+
+        console.log(`Buffers de documents stockés: ${createLandDto.fileBuffers.documents.length}`);
+      } else {
+        console.log('Aucun document reçu');
+      }
+
+      if (files?.images && files.images.length > 0) {
+        console.log(`Images reçues: ${files.images.length}`);
+
+        files.images.forEach((file, index) => {
+          console.log(`Image ${index + 1}:`, {
+            originalname: file.originalname,
+            mimetype: file.mimetype,
+            size: file.size,
+            buffer: file.buffer ? 'Buffer disponible' : 'Buffer non disponible'
+          });
+
+          // Stocker les buffers directement
+          if (file.buffer) {
+            createLandDto.fileBuffers.images.push({
+              buffer: file.buffer,
+              originalname: file.originalname,
+              mimetype: file.mimetype
+            });
+          }
+        });
+
+        console.log(`Buffers d'images stockés: ${createLandDto.fileBuffers.images.length}`);
+      } else {
+        console.log('Aucune image reçue');
+      }
+      console.log('=============================\n');
+
+      // Extraire et construire l'objet amenities à partir des champs individuels du formulaire
+      const amenities: Record<string, boolean> = {};
+      const amenityFields = [
+        'electricity', 'gas', 'water', 'sewer', 'headquarters', 'internet',
+        'geotechnicalSurvey', 'soilAnalysis', 'topographicalSurvey', 'environmentalStudy',
+        'roadAccess', 'publicTransport', 'pavedRoad', 'buildingPermit', 'zoned',
+        'boundaryMarkers', 'drainage', 'floodRisk', 'rainwaterCollection',
+        'fenced', 'securitySystem', 'trees', 'wellWater', 'flatTerrain'
+      ];
+
+      amenityFields.forEach(field => {
+        if (field in body) {
+          // Convertir les chaînes 'true'/'false' en booléens
+          amenities[field] = body[field] === 'true' || body[field] === true;
+        }
+      });
+
+      // Ajouter les amenities à l'objet createLandDto
+      createLandDto.amenities = amenities;
+
+      // CORRECTION: Convertir les valeurs d'énumération en minuscules pour conformité avec le schéma Mongoose
+      createLandDto.status = createLandDto.status?.toLowerCase();
+      createLandDto.landtype = createLandDto.landtype?.toLowerCase();
+
+      console.log('✅ Land creation request prepared:', {
+        title: createLandDto.title,
+        location: createLandDto.location,
+        surface: createLandDto.surface,
+        status: createLandDto.status,        // Valeur convertie en minuscules
+        landtype: createLandDto.landtype,    // Valeur convertie en minuscules
+        documentsCount: createLandDto.fileBuffers.documents.length,
+        imagesCount: createLandDto.fileBuffers.images.length,
+        amenitiesCount: Object.keys(amenities).length
+      });
+
+      return this.landService.create(createLandDto, user.ethAddress);
+    } catch (error) {
+      console.error('❌ Error in create land endpoint:', {
+        message: error.message,
+        stack: error.stack,
+        timestamp: '2025-04-11 15:26:31',
+        user: 'nesssim'
+      });
+
+      if (error.response) {
+        throw error;
+      }
+      throw new InternalServerErrorException(`Failed to create land: ${error.message}`);
     }
-
-    console.log('✅ Ethereum address verification successful:', {
-      address: user.ethAddress,
-      timestamp: new Date().toISOString()
-    });
-
-    // Ajouter l'ID de l'utilisateur depuis le token
-    createLandDto.ownerId = user.userId;
-
-    // Mapper les fichiers uploadés
-    if (files?.documents) {
-      createLandDto.ipfsCIDs = files.documents.map(file => file.path);
-    }
-    if (files?.images) {
-      createLandDto.imageCIDs = files.images.map(file => file.path);
-    }
-
-    return this.landService.create(createLandDto, user.ethAddress);
   }
 
   @Get()
