@@ -48,12 +48,10 @@ export class LandController {
       const body = req.body as any;
 
       console.log('\n====== JWT Payload Details ======');
-      console.log('Current Date and Time (UTC):', '2025-04-11 15:26:31');
       console.log('User ID:', user.userId);
       console.log('Email:', user.email);
       console.log('Role:', user.role);
       console.log('Ethereum Address:', user.ethAddress || 'Not found in token');
-      console.log('User Login: nesssim');
       console.log('=============================\n');
 
       // Vérifier que l'utilisateur a une adresse Ethereum
@@ -177,6 +175,39 @@ export class LandController {
       throw new InternalServerErrorException(`Failed to create land: ${error.message}`);
     }
   }
+
+@Get('without-geometer-validation')
+/*@RequirePermissions({
+  resource: Resource.LAND,
+  actions: ['view_land']
+})*/
+async getLandsWithoutGeometerValidation(@Req() req: Request) {
+  try {
+    const user = (req as any).user as JWTPayload;
+    console.log('\n====== User Auth Details ======');
+    console.log('User ID:', user.userId);
+    console.log('Email:', user.email);
+    console.log('Role:', user.role);
+    console.log('=============================\n');
+    
+    const lands = await this.landService.findLandsWithoutGeometerValidation();
+    
+    console.log(`✅ Retrieved ${lands.length} lands without geometer validation.`);
+    
+    return {
+      success: true,
+      data: lands,
+      message: `Retrieved ${lands.length} lands without geometer validation`,
+    };
+  } catch (error) {
+    console.error('❌ Error getting lands without geometer validation:', {
+      message: error.message,
+      stack: error.stack,
+    });
+    
+    throw new InternalServerErrorException(`Failed to get lands without geometer validation: ${error.message}`);
+  }
+}
 
   @Get()
   /*@RequirePermissions({
