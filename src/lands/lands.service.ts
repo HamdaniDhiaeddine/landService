@@ -36,37 +36,50 @@ export class LandService {
       if (!ethers.isAddress(ownerAddress)) {
         throw new Error('Invalid Ethereum address');
       }
-
-      this.logger.log(`Starting land creation process at 2025-04-11 15:26:31 for user: nesssim`);
+      
+      this.logger.log(`Starting land creation process at ${new Date().toISOString()} for user: nesssim`);
       this.logger.log(`Files to process: ${createLandDto.fileBuffers?.documents?.length || 0} documents, ${createLandDto.fileBuffers?.images?.length || 0} images`);
-
+      
+      // Ajouter des logs pour vérifier les buffers
+      if (createLandDto.fileBuffers?.documents?.length > 0) {
+        createLandDto.fileBuffers.documents.forEach((doc, i) => {
+          this.logger.debug(`Document buffer ${i}: ${doc.originalname}, buffer size: ${doc.buffer?.length || 0} bytes`);
+        });
+      }
+      
+      if (createLandDto.fileBuffers?.images?.length > 0) {
+        createLandDto.fileBuffers.images.forEach((img, i) => {
+          this.logger.debug(`Image buffer ${i}: ${img.originalname}, buffer size: ${img.buffer?.length || 0} bytes`);
+        });
+      }
+  
       // 1. Traiter les documents directement à partir des buffers
       const documentsCIDs = await this.processBuffers(
         createLandDto.fileBuffers?.documents || [],
         'documents'
       );
-
+  
       // 2. Traiter les images directement à partir des buffers
       const imagesCIDs = await this.processBuffers(
         createLandDto.fileBuffers?.images || [],
         'images'
       );
-
+  
       // Créer un objet qui contient uniquement les CIDs
       const cidsData = {
         documentsCIDs: documentsCIDs,
         imagesCIDs: imagesCIDs,
-        timestamp: '2025-04-11 15:26:31',
+        timestamp: new Date().toISOString(),
         user: 'nesssim'
       };
-
+  
       // Générer un CID combiné
       const combinedCID = await this.ipfsService.uploadFile(
         Buffer.from(JSON.stringify(cidsData))
       );
-
+  
       this.logger.log(`Generated combined CID for documents and images: ${combinedCID}`);
-
+  
       // Convertir les commodités en Map pour Mongoose
       const amenitiesMap = new Map<string, boolean>();
       if (createLandDto.amenities) {
@@ -74,18 +87,18 @@ export class LandService {
           amenitiesMap.set(key, Boolean(value));
         });
       }
-
-      // 5. Enregistrer sur la blockchain avec des valeurs par défaut pour éviter l'erreur BigInt
+  
+      // 5. Enregistrer sur la blockchain avec des valeurs par défaut non nulles
       const blockchainTx = await this.blockchainService.registerLand({
         title: createLandDto.title,
         location: createLandDto.location,
         surface: Number(createLandDto.surface) || 1250,
-        totalTokens: null, // Valeur par défaut
-        pricePerToken: null, // Valeur par défaut
+        totalTokens: 100, 
+        pricePerToken: '1',
         owner: ownerAddress,
         metadataCID: combinedCID
       });
-
+  
       // 6. Créer l'entrée dans MongoDB
       const land = new this.landModel({
         ...createLandDto,
@@ -93,60 +106,78 @@ export class LandService {
         blockchainLandId: blockchainTx.landId,
         ownerAddress,
         amenities: amenitiesMap,
-        ipfsCIDs: documentsCIDs,
-        imageCIDs: imagesCIDs,
+        ipfsCIDs: documentsCIDs, 
+        imageCIDs: imagesCIDs, 
       });
-
+  
       const savedLand = await land.save();
       this.logger.log(`Land created with ID: ${savedLand._id}`, {
         landId: savedLand._id,
         blockchainTxHash: blockchainTx.hash,
         ownerAddress
       });
-
+  
       return savedLand;
     } catch (error) {
-      this.logger.error(`Error in create land :`, error);
+      this.logger.error(`Error in create land:`, error);
+      
+      // Vérification spécifique pour l'erreur de conversion BigInt
+      if (error.message && error.message.includes('Cannot convert null to a BigInt')) {
+        throw new InternalServerErrorException(
+          'Failed to create land: Cannot convert null to a BigInt. Please ensure totalTokens and pricePerToken are not null.'
+        );
+      }
+      
       throw new InternalServerErrorException(
         `Failed to create land: ${error.message}`
       );
     }
   }
-
-  // Nouvelle méthode pour traiter les buffers directement
+  
+  // Méthode améliorée pour traiter les buffers directement
   private async processBuffers(files: FileBufferDto[], fileType: string): Promise<string[]> {
     if (!files || files.length === 0) {
       this.logger.log(`No ${fileType} files to process`);
       return [];
     }
-
+  
     this.logger.log(`Processing ${files.length} ${fileType} files`);
-
+    
     const results: string[] = [];
-
+  
     for (const file of files) {
       try {
-        if (!file.buffer) {
-          this.logger.warn(`Skipping ${fileType} file ${file.originalname}: Buffer non disponible`);
+        if (!file.buffer || file.buffer.length === 0) {
+          this.logger.warn(`Skipping ${fileType} file ${file.originalname}: Buffer non disponible ou vide`);
           continue;
         }
-
+        
         this.logger.log(`Processing ${fileType} file: ${file.originalname}, size: ${file.buffer.length} bytes`);
-
+        
+        // Vérifier si le buffer est valide pour le debug
+        if (Buffer.isBuffer(file.buffer)) {
+          this.logger.debug(`Valid Buffer detected with length: ${file.buffer.length}`);
+        } else {
+          this.logger.warn(`Invalid Buffer type: ${typeof file.buffer}`);
+          // Tentative de conversion si ce n'est pas un Buffer
+          file.buffer = Buffer.from(file.buffer);
+        }
+        
         // Uploader vers IPFS directement à partir du buffer
         const cid = await this.ipfsService.uploadFile(file.buffer);
         this.logger.log(`File uploaded to IPFS: ${file.originalname} -> ${cid}`);
-
+        
         results.push(cid);
       } catch (error) {
         this.logger.error(`Error processing ${fileType} file ${file.originalname}:`, error);
         // Continuer avec les autres fichiers même en cas d'erreur
       }
     }
-
+  
     this.logger.log(`Successfully processed ${results.length} of ${files.length} ${fileType} files`);
     return results;
   }
+
 
 
   async processFiles(filePaths: string[]): Promise<string[]> {
