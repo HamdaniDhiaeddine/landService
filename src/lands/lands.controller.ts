@@ -17,6 +17,7 @@ import { BlockchainService } from 'src/blockchain/services/blockchain.service';
 import { ValidationRequest, ValidationResponse } from 'src/blockchain/interfaces/validation.interface';
 import { ethers } from 'ethers';
 import multer from 'multer';
+import { EnhancedLandResult } from './interfaces/enhanced-land.interface';
 
 
 @Controller('lands')
@@ -220,7 +221,7 @@ export class LandController {
       console.log('Role:', user.role);
       console.log('=============================\n');
 
-      const lands = await this.landService.findLandsWithoutGeometerValidation();
+      const lands: EnhancedLandResult[] = await this.landService.findLandsWithoutGeometerValidation();
 
       console.log(`✅ Retrieved ${lands.length} lands without geometer validation.`);
 
@@ -238,7 +239,6 @@ export class LandController {
       throw new InternalServerErrorException(`Failed to get lands without geometer validation: ${error.message}`);
     }
   }
-
   @Get()
   /*@RequirePermissions({
     resource: Resource.LAND,
