@@ -751,8 +751,6 @@ export class BlockchainService implements OnModuleInit {
             blockNumber: receipt.blockNumber,
             gasUsed: receipt.gasUsed.toString(),
             status: receipt.status,
-            timestamp: '2025-04-06 01:46:45',
-            userLogin: 'dalikhouaja008'
         });
 
         return {

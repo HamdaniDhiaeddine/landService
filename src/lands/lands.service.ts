@@ -37,8 +37,21 @@ export class LandService {
         throw new Error('Invalid Ethereum address');
       }
       
-      this.logger.log(`Starting land creation process at 2025-04-11 15:26:31 for user: nesssim`);
+      this.logger.log(`Starting land creation process at ${new Date().toISOString()} for user: nesssim`);
       this.logger.log(`Files to process: ${createLandDto.fileBuffers?.documents?.length || 0} documents, ${createLandDto.fileBuffers?.images?.length || 0} images`);
+      
+      // Ajouter des logs pour vérifier les buffers
+      if (createLandDto.fileBuffers?.documents?.length > 0) {
+        createLandDto.fileBuffers.documents.forEach((doc, i) => {
+          this.logger.debug(`Document buffer ${i}: ${doc.originalname}, buffer size: ${doc.buffer?.length || 0} bytes`);
+        });
+      }
+      
+      if (createLandDto.fileBuffers?.images?.length > 0) {
+        createLandDto.fileBuffers.images.forEach((img, i) => {
+          this.logger.debug(`Image buffer ${i}: ${img.originalname}, buffer size: ${img.buffer?.length || 0} bytes`);
+        });
+      }
   
       // 1. Traiter les documents directement à partir des buffers
       const documentsCIDs = await this.processBuffers(
@@ -56,7 +69,7 @@ export class LandService {
       const cidsData = {
         documentsCIDs: documentsCIDs,
         imagesCIDs: imagesCIDs,
-        timestamp: '2025-04-11 15:26:31',
+        timestamp: new Date().toISOString(),
         user: 'nesssim'
       };
   
@@ -75,13 +88,13 @@ export class LandService {
         });
       }
   
-      // 5. Enregistrer sur la blockchain avec des valeurs par défaut pour éviter l'erreur BigInt
+      // 5. Enregistrer sur la blockchain avec des valeurs par défaut non nulles
       const blockchainTx = await this.blockchainService.registerLand({
         title: createLandDto.title,
         location: createLandDto.location,
         surface: Number(createLandDto.surface) || 1250,
-        totalTokens: null, // Valeur par défaut
-        pricePerToken: null, // Valeur par défaut
+        totalTokens: 100, 
+        pricePerToken: '1',
         owner: ownerAddress,
         metadataCID: combinedCID
       });
@@ -106,14 +119,22 @@ export class LandService {
   
       return savedLand;
     } catch (error) {
-      this.logger.error(`Error in create land :`, error);
+      this.logger.error(`Error in create land:`, error);
+      
+      // Vérification spécifique pour l'erreur de conversion BigInt
+      if (error.message && error.message.includes('Cannot convert null to a BigInt')) {
+        throw new InternalServerErrorException(
+          'Failed to create land: Cannot convert null to a BigInt. Please ensure totalTokens and pricePerToken are not null.'
+        );
+      }
+      
       throw new InternalServerErrorException(
         `Failed to create land: ${error.message}`
       );
     }
   }
   
-  // Nouvelle méthode pour traiter les buffers directement
+  // Méthode améliorée pour traiter les buffers directement
   private async processBuffers(files: FileBufferDto[], fileType: string): Promise<string[]> {
     if (!files || files.length === 0) {
       this.logger.log(`No ${fileType} files to process`);
@@ -126,12 +147,21 @@ export class LandService {
   
     for (const file of files) {
       try {
-        if (!file.buffer) {
-          this.logger.warn(`Skipping ${fileType} file ${file.originalname}: Buffer non disponible`);
+        if (!file.buffer || file.buffer.length === 0) {
+          this.logger.warn(`Skipping ${fileType} file ${file.originalname}: Buffer non disponible ou vide`);
           continue;
         }
         
         this.logger.log(`Processing ${fileType} file: ${file.originalname}, size: ${file.buffer.length} bytes`);
+        
+        // Vérifier si le buffer est valide pour le debug
+        if (Buffer.isBuffer(file.buffer)) {
+          this.logger.debug(`Valid Buffer detected with length: ${file.buffer.length}`);
+        } else {
+          this.logger.warn(`Invalid Buffer type: ${typeof file.buffer}`);
+          // Tentative de conversion si ce n'est pas un Buffer
+          file.buffer = Buffer.from(file.buffer);
+        }
         
         // Uploader vers IPFS directement à partir du buffer
         const cid = await this.ipfsService.uploadFile(file.buffer);
@@ -149,12 +179,13 @@ export class LandService {
   }
 
 
+
   async processFiles(filePaths: string[]): Promise<string[]> {
     if (!filePaths || filePaths.length === 0) {
       console.log('Aucun fichier à traiter');
       return [];
     }
-  
+
     const results = [];
     for (const path of filePaths) {
       try {
@@ -163,23 +194,23 @@ export class LandService {
           console.log('Chemin de fichier non valide, ignoré');
           continue;
         }
-  
+
         console.log(`Traitement du fichier: ${path}`);
-        
+
         // Lire le fichier
         const fileContent = await fs.readFile(path);
-        
+
         // Uploader vers IPFS
         const cid = await this.ipfsService.uploadFile(fileContent);
         console.log(`Fichier téléchargé vers IPFS avec CID: ${cid}`);
-        
+
         results.push(cid);
       } catch (error) {
         console.error(`Error processing file ${path}:`, error);
         // Continuer avec les autres fichiers même en cas d'erreur
       }
     }
-  
+
     return results;
   }
   async getDecryptedFile(cid: string): Promise<Buffer> {
@@ -267,6 +298,8 @@ export class LandService {
 
       this.logger.log(`Land with blockchain ID ${blockchainLandId} found`);
 
+
+
       // Créer les métadonnées de validation avec le rôle directement comme ValidatorType
       const validationMetadata: ValidationMetadata = {
         text: request.comment,
@@ -317,10 +350,36 @@ export class LandService {
 
       const savedValidation = await this.validationModel.create(validationDoc);
 
-      this.logger.log('Validation document created successfully', { validationDoc });
+      const updateResult = await this.landModel.findOneAndUpdate(
+        { blockchainLandId: blockchainLandId },
+        {
+          $push: {
+            validations: {
+              validator: user.ethAddress,
+              validatorType: this.getValidatorTypeEnum(user.role),
+              timestamp: validationMetadata.timestamp,
+              isValidated: request.isValid,
+              cidComments: cidComments
+            }
+          }
+        },
+        { new: true }  // Retourner le document mis à jour
+      );
+
+      this.logger.log('Land document updated with validation', {
+        landId: land._id,
+        validationsCount: updateResult.validations ? updateResult.validations.length : 0
+      });
 
       // Calculer la progression de la validation
-      const validationProgress = await this.calculateValidationProgress(blockchainLandId);
+      const validationProgress = await this.calculateValidationProgressFromLand(updateResult);
+
+      const newStatus = this.determineLandStatus(validationProgress);
+      await this.landModel.findOneAndUpdate(
+        { blockchainLandId: blockchainLandId },
+        { $set: { status: newStatus } },
+        { new: true }
+      );
 
       const response: ValidationResponse = {
         success: true,
@@ -365,7 +424,62 @@ export class LandService {
       throw new InternalServerErrorException(`Validation failed: ${error.message}`);
     }
   }
+  private async calculateValidationProgressFromLand(land: any): Promise<ValidationProgress> {
+    this.logger.log('Calculating validation progress from land document', {
+      landId: land._id,
+      validationsCount: land.validations ? land.validations.length : 0
+    });
 
+    const progress: ValidationProgress = {
+      total: 3,
+      completed: 0,
+      percentage: 0,
+      validations: [
+        {
+          role: 'NOTAIRE',
+          validated: false
+        },
+        {
+          role: 'GEOMETRE',
+          validated: false
+        },
+        {
+          role: 'EXPERT_JURIDIQUE',
+          validated: false
+        }
+      ]
+    };
+
+    if (land.validations && land.validations.length > 0) {
+      land.validations.forEach(validation => {
+        let validatorRole;
+        // Gérer le cas où validatorType est un nombre ou un objet
+        if (typeof validation.validatorType === 'number') {
+          validatorRole = this.getValidatorRoleString(validation.validatorType);
+        } else if (validation.validatorType) {
+          validatorRole = this.getValidatorRoleString(parseInt(validation.validatorType));
+        }
+
+        const validationEntry = progress.validations.find(v => v.role === validatorRole);
+
+        if (validationEntry && validation.isValidated) {
+          validationEntry.validated = true;
+          validationEntry.timestamp = validation.timestamp;
+          validationEntry.validator = validation.validator;
+          progress.completed++;
+        }
+      });
+
+      progress.percentage = (progress.completed / progress.total) * 100;
+    }
+
+    this.logger.log('Validation progress calculated from land', {
+      completed: progress.completed,
+      percentage: progress.percentage
+    });
+
+    return progress;
+  }
   private getValidatorTypeEnum(role: string): ValidatorType {
     const roleMap = {
       'NOTAIRE': ValidatorType.NOTAIRE,
@@ -455,8 +569,6 @@ export class LandService {
       blockchainLandId,
       completed: progress.completed,
       percentage: progress.percentage,
-      timestamp: '2025-04-04 18:26:46',
-      userLogin: 'dalikhouaja008'
     });
 
     return progress;
@@ -485,5 +597,88 @@ export class LandService {
     const allValid = progress.validations.every(v => v.validated);
     return allValid ? LandValidationStatus.VALIDATED : LandValidationStatus.REJECTED;
   }
+
+  /**
+    * Récupère les terrains sans validation de géomètre avec URLs d'images
+    */
+  async findLandsWithoutGeometerValidation(): Promise<any[]> {
+    try {
+      this.logger.log(`[${new Date().toISOString()}] Searching for lands without geometer validation.`);
+
+      // Utilisez la valeur numérique 1 au lieu de 'GEOMETRE' pour le validatorType
+      const validatorTypeGeometre = 1; // 1 = Géomètre
+
+      // Requête modifiée avec le type numérique
+      const query = {
+        $or: [
+          { validations: { $size: 0 } },
+          { validations: { $not: { $elemMatch: { validatorType: validatorTypeGeometre } } } },
+        ]
+      };
+
+      // Liste des attributs à récupérer
+      const projection = {
+        _id: 1,
+        title: 1,
+        description: 1,
+        location: 1,
+        surface: 1,
+        latitude: 1,
+        longitude: 1,
+        imageCIDs: 1,
+        amenities: 1,
+        validations: 1,
+        landtype: 1,     // Ajouté car utilisé dans votre frontend
+        ownerId: 1,      // Ajouté car requis dans votre modèle
+        ownerAddress: 1, // Ajouté car requis dans votre modèle
+        status: 1,       // Ajouté car affiché dans votre frontend
+        blockchainLandId: 1 // Ajouté car affiché dans votre frontend
+      };
+
+      // Exécuter la requête
+      const lands = await this.landModel.find(query, projection).exec();
+
+      this.logger.log(`[${new Date().toISOString()}] Found ${lands.length} lands without geometer validation. `);
+
+      return lands;
+    } catch (error) {
+      this.logger.error(`[${new Date().toISOString()}] Error finding lands without geometer validation. `, error.stack);
+      throw new Error(`Failed to fetch lands without geometer validation: ${error.message}`);
+    }
+  }
+
+  /**
+   * Ajoute des images à un terrain en les téléversant sur IPFS
+   */
+  /* async addImagesToLand(landId: string, imageFiles: Array<Express.Multer.File>): Promise<string[]> {
+     try {
+       this.logger.log(`Adding ${imageFiles.length} images to land ${landId}. `);
+ 
+       const land = await this.landModel.findById(landId);
+       if (!land) {
+         throw new NotFoundException(`Land with ID ${landId} not found`);
+       }
+ 
+       const imageCIDs = [];
+ 
+       // Téléverser chaque image sur IPFS
+       for (const file of imageFiles) {
+         const cid = await this.ipfsService.uploadFile(file.buffer);
+         imageCIDs.push(cid);
+       }
+ 
+       // Mettre à jour le document avec les nouveaux CIDs
+       land.imageCIDs = [...(land.imageCIDs || []), ...imageCIDs];
+       await land.save();
+ 
+       this.logger.log(`Successfully added ${imageCIDs.length} images to land ${landId}. `);
+ 
+       return imageCIDs;
+     } catch (error) {
+       this.logger.error(`Error adding images to land ${landId}.`, error.stack);
+       throw new Error(`Failed to add images to land: ${error.message}`);
+     }
+   }*/
+
 
 }

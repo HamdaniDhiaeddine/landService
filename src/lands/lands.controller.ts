@@ -16,6 +16,7 @@ import { ValidateLandDto } from './dto/validate-land.dto';
 import { BlockchainService } from 'src/blockchain/services/blockchain.service';
 import { ValidationRequest, ValidationResponse } from 'src/blockchain/interfaces/validation.interface';
 import { ethers } from 'ethers';
+import multer from 'multer';
 
 
 @Controller('lands')
@@ -40,20 +41,44 @@ export class LandController {
   )
   async create(
     @Body() createLandDto: CreateLandDto,
-    @UploadedFiles() files: any,
+    @UploadedFiles() files: { documents?: Express.Multer.File[], images?: Express.Multer.File[] },
     @Req() req: Request
   ) {
     try {
       const user = (req as any).user as JWTPayload;
       const body = req.body as any;
 
+      // Au début de votre méthode create, ajoutez:
+      console.log('=============== DEBUG COMPLET ===============');
+      console.log('Headers:', JSON.stringify((req as any).headers));
+      console.log('Files object exists:', !!files);
+      console.log('Files object content:', JSON.stringify({
+        hasDocuments: !!files?.documents,
+        hasImages: !!files?.images,
+        documentsCount: files?.documents?.length || 0,
+        imagesCount: files?.images?.length || 0
+      }));
+      console.log('Request body keys:', Object.keys(req.body));
+      console.log('============================================');
+
+      if (files?.documents) {
+        files.documents.forEach((doc, i) => {
+          this.logger.debug(`Document ${i}: ${doc.originalname}, size: ${doc.size}, mime: ${doc.mimetype}`);
+        });
+      }
+      if (files?.images) {
+        files.images.forEach((img, i) => {
+          this.logger.debug(`Image ${i}: ${img.originalname}, size: ${img.size}, mime: ${img.mimetype}`);
+        });
+      }
+      this.logger.debug('=============================');
+
       console.log('\n====== JWT Payload Details ======');
-      console.log('Current Date and Time (UTC):', '2025-04-11 15:26:31');
+      console.log('Current Date and Time (UTC):', new Date().toISOString());
       console.log('User ID:', user.userId);
       console.log('Email:', user.email);
       console.log('Role:', user.role);
       console.log('Ethereum Address:', user.ethAddress || 'Not found in token');
-      console.log('User Login: nesssim');
       console.log('=============================\n');
 
       // Vérifier que l'utilisateur a une adresse Ethereum
@@ -66,11 +91,13 @@ export class LandController {
       // Ajouter l'ID de l'utilisateur depuis le token
       createLandDto.ownerId = user.userId;
 
-      // CORRECTION: Utiliser les buffers des fichiers au lieu des chemins
-      createLandDto.fileBuffers = {
-        documents: [],
-        images: []
-      };
+      // Initialiser fileBuffers si ce n'est pas déjà fait
+      if (!createLandDto.fileBuffers) {
+        createLandDto.fileBuffers = {
+          documents: [],
+          images: []
+        };
+      }
 
       console.log('\n====== Fichiers reçus ======');
 
@@ -82,7 +109,7 @@ export class LandController {
             originalname: file.originalname,
             mimetype: file.mimetype,
             size: file.size,
-            buffer: file.buffer ? 'Buffer disponible' : 'Buffer non disponible'
+            buffer: file.buffer ? `Buffer disponible (${file.buffer.length} bytes)` : 'Buffer non disponible'
           });
 
           // Stocker les buffers directement
@@ -108,7 +135,7 @@ export class LandController {
             originalname: file.originalname,
             mimetype: file.mimetype,
             size: file.size,
-            buffer: file.buffer ? 'Buffer disponible' : 'Buffer non disponible'
+            buffer: file.buffer ? `Buffer disponible (${file.buffer.length} bytes)` : 'Buffer non disponible'
           });
 
           // Stocker les buffers directement
@@ -155,8 +182,8 @@ export class LandController {
         title: createLandDto.title,
         location: createLandDto.location,
         surface: createLandDto.surface,
-        status: createLandDto.status,        // Valeur convertie en minuscules
-        landtype: createLandDto.landtype,    // Valeur convertie en minuscules
+        status: createLandDto.status,
+        landtype: createLandDto.landtype,
         documentsCount: createLandDto.fileBuffers.documents.length,
         imagesCount: createLandDto.fileBuffers.images.length,
         amenitiesCount: Object.keys(amenities).length
@@ -167,7 +194,7 @@ export class LandController {
       console.error('❌ Error in create land endpoint:', {
         message: error.message,
         stack: error.stack,
-        timestamp: '2025-04-11 15:26:31',
+        timestamp: new Date().toISOString(),
         user: 'nesssim'
       });
 
@@ -175,6 +202,40 @@ export class LandController {
         throw error;
       }
       throw new InternalServerErrorException(`Failed to create land: ${error.message}`);
+    }
+  }
+
+
+  @Get('without-geometer-validation')
+  /*@RequirePermissions({
+    resource: Resource.LAND,
+    actions: ['view_land']
+  })*/
+  async getLandsWithoutGeometerValidation(@Req() req: Request) {
+    try {
+      const user = (req as any).user as JWTPayload;
+      console.log('\n====== User Auth Details ======');
+      console.log('User ID:', user.userId);
+      console.log('Email:', user.email);
+      console.log('Role:', user.role);
+      console.log('=============================\n');
+
+      const lands = await this.landService.findLandsWithoutGeometerValidation();
+
+      console.log(`✅ Retrieved ${lands.length} lands without geometer validation.`);
+
+      return {
+        success: true,
+        data: lands,
+        message: `Retrieved ${lands.length} lands without geometer validation`,
+      };
+    } catch (error) {
+      console.error('❌ Error getting lands without geometer validation:', {
+        message: error.message,
+        stack: error.stack,
+      });
+
+      throw new InternalServerErrorException(`Failed to get lands without geometer validation: ${error.message}`);
     }
   }
 

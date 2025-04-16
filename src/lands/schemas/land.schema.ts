@@ -83,6 +83,8 @@ export class Land {
     default: new Map()
   })
   amenities: Map<string, boolean>;
+
+  
 }
 
 export type LandDocument = Land & Document;
