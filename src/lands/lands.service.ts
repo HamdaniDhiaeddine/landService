@@ -15,6 +15,7 @@ import { LandValidationStatus, ValidationDocument, ValidationMetadata, Validatio
 import { JWTPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { Validation } from './schemas/validation.schema';
 import { ValidateLandDto } from './dto/validate-land.dto';
+import { EnhancedLandResult, IpfsFileInfo } from './interfaces/enhanced-land.interface';
 
 
 @Injectable()
@@ -36,35 +37,35 @@ export class LandService {
       if (!ethers.isAddress(ownerAddress)) {
         throw new Error('Invalid Ethereum address');
       }
-      
+
       this.logger.log(`Starting land creation process at ${new Date().toISOString()} for user: nesssim`);
       this.logger.log(`Files to process: ${createLandDto.fileBuffers?.documents?.length || 0} documents, ${createLandDto.fileBuffers?.images?.length || 0} images`);
-      
+
       // Ajouter des logs pour vérifier les buffers
       if (createLandDto.fileBuffers?.documents?.length > 0) {
         createLandDto.fileBuffers.documents.forEach((doc, i) => {
           this.logger.debug(`Document buffer ${i}: ${doc.originalname}, buffer size: ${doc.buffer?.length || 0} bytes`);
         });
       }
-      
+
       if (createLandDto.fileBuffers?.images?.length > 0) {
         createLandDto.fileBuffers.images.forEach((img, i) => {
           this.logger.debug(`Image buffer ${i}: ${img.originalname}, buffer size: ${img.buffer?.length || 0} bytes`);
         });
       }
-  
+
       // 1. Traiter les documents directement à partir des buffers
       const documentsCIDs = await this.processBuffers(
         createLandDto.fileBuffers?.documents || [],
         'documents'
       );
-  
+
       // 2. Traiter les images directement à partir des buffers
       const imagesCIDs = await this.processBuffers(
         createLandDto.fileBuffers?.images || [],
         'images'
       );
-  
+
       // Créer un objet qui contient uniquement les CIDs
       const cidsData = {
         documentsCIDs: documentsCIDs,
@@ -72,14 +73,14 @@ export class LandService {
         timestamp: new Date().toISOString(),
         user: 'nesssim'
       };
-  
+
       // Générer un CID combiné
       const combinedCID = await this.ipfsService.uploadFile(
         Buffer.from(JSON.stringify(cidsData))
       );
-  
+
       this.logger.log(`Generated combined CID for documents and images: ${combinedCID}`);
-  
+
       // Convertir les commodités en Map pour Mongoose
       const amenitiesMap = new Map<string, boolean>();
       if (createLandDto.amenities) {
@@ -87,18 +88,18 @@ export class LandService {
           amenitiesMap.set(key, Boolean(value));
         });
       }
-  
+
       // 5. Enregistrer sur la blockchain avec des valeurs par défaut non nulles
       const blockchainTx = await this.blockchainService.registerLand({
         title: createLandDto.title,
         location: createLandDto.location,
         surface: Number(createLandDto.surface) || 1250,
-        totalTokens: 100, 
+        totalTokens: 100,
         pricePerToken: '1',
         owner: ownerAddress,
         metadataCID: combinedCID
       });
-  
+
       // 6. Créer l'entrée dans MongoDB
       const land = new this.landModel({
         ...createLandDto,
@@ -106,54 +107,54 @@ export class LandService {
         blockchainLandId: blockchainTx.landId,
         ownerAddress,
         amenities: amenitiesMap,
-        ipfsCIDs: documentsCIDs, 
-        imageCIDs: imagesCIDs, 
+        ipfsCIDs: documentsCIDs,
+        imageCIDs: imagesCIDs,
       });
-  
+
       const savedLand = await land.save();
       this.logger.log(`Land created with ID: ${savedLand._id}`, {
         landId: savedLand._id,
         blockchainTxHash: blockchainTx.hash,
         ownerAddress
       });
-  
+
       return savedLand;
     } catch (error) {
       this.logger.error(`Error in create land:`, error);
-      
+
       // Vérification spécifique pour l'erreur de conversion BigInt
       if (error.message && error.message.includes('Cannot convert null to a BigInt')) {
         throw new InternalServerErrorException(
           'Failed to create land: Cannot convert null to a BigInt. Please ensure totalTokens and pricePerToken are not null.'
         );
       }
-      
+
       throw new InternalServerErrorException(
         `Failed to create land: ${error.message}`
       );
     }
   }
-  
+
   // Méthode améliorée pour traiter les buffers directement
   private async processBuffers(files: FileBufferDto[], fileType: string): Promise<string[]> {
     if (!files || files.length === 0) {
       this.logger.log(`No ${fileType} files to process`);
       return [];
     }
-  
+
     this.logger.log(`Processing ${files.length} ${fileType} files`);
-    
+
     const results: string[] = [];
-  
+
     for (const file of files) {
       try {
         if (!file.buffer || file.buffer.length === 0) {
           this.logger.warn(`Skipping ${fileType} file ${file.originalname}: Buffer non disponible ou vide`);
           continue;
         }
-        
+
         this.logger.log(`Processing ${fileType} file: ${file.originalname}, size: ${file.buffer.length} bytes`);
-        
+
         // Vérifier si le buffer est valide pour le debug
         if (Buffer.isBuffer(file.buffer)) {
           this.logger.debug(`Valid Buffer detected with length: ${file.buffer.length}`);
@@ -162,18 +163,18 @@ export class LandService {
           // Tentative de conversion si ce n'est pas un Buffer
           file.buffer = Buffer.from(file.buffer);
         }
-        
+
         // Uploader vers IPFS directement à partir du buffer
         const cid = await this.ipfsService.uploadFile(file.buffer);
         this.logger.log(`File uploaded to IPFS: ${file.originalname} -> ${cid}`);
-        
+
         results.push(cid);
       } catch (error) {
         this.logger.error(`Error processing ${fileType} file ${file.originalname}:`, error);
         // Continuer avec les autres fichiers même en cas d'erreur
       }
     }
-  
+
     this.logger.log(`Successfully processed ${results.length} of ${files.length} ${fileType} files`);
     return results;
   }
@@ -601,7 +602,7 @@ export class LandService {
   /**
     * Récupère les terrains sans validation de géomètre avec URLs d'images
     */
-  async findLandsWithoutGeometerValidation(): Promise<any[]> {
+  async findLandsWithoutGeometerValidation(): Promise<EnhancedLandResult[]> {
     try {
       this.logger.log(`[${new Date().toISOString()}] Searching for lands without geometer validation.`);
 
@@ -626,59 +627,60 @@ export class LandService {
         latitude: 1,
         longitude: 1,
         imageCIDs: 1,
+        ipfsCIDs: 1,
         amenities: 1,
         validations: 1,
-        landtype: 1,     // Ajouté car utilisé dans votre frontend
-        ownerId: 1,      // Ajouté car requis dans votre modèle
-        ownerAddress: 1, // Ajouté car requis dans votre modèle
-        status: 1,       // Ajouté car affiché dans votre frontend
-        blockchainLandId: 1 // Ajouté car affiché dans votre frontend
+        landtype: 1,
+        ownerId: 1,
+        ownerAddress: 1,
+        status: 1,
+        blockchainLandId: 1
       };
 
       // Exécuter la requête
       const lands = await this.landModel.find(query, projection).exec();
 
-      this.logger.log(`[${new Date().toISOString()}] Found ${lands.length} lands without geometer validation. `);
+      // Transformer les terrains pour inclure les URLs des images et documents
+      const enhancedLands: EnhancedLandResult[] = lands.map(land => {
+        // Convertir en objet simple si c'est un document Mongoose
+        const landObj: any = land.toObject ? land.toObject() : { ...land };
 
-      return lands;
+        // Créer des objets images avec URLs
+        const imageInfos: IpfsFileInfo[] = (landObj.imageCIDs || []).map((cid, index) => ({
+          cid: cid,
+          url: this.ipfsService.getIPFSUrl(cid),
+          index: index + 1
+        }));
+
+        // Créer des objets documents avec URLs
+        const documentInfos: IpfsFileInfo[] = (landObj.ipfsCIDs || []).map((cid, index) => ({
+          cid: cid,
+          url: this.ipfsService.getIPFSUrl(cid),
+          index: index + 1
+        }));
+
+        // Ajouter ces nouvelles propriétés à l'objet terrain
+        landObj.imageInfos = imageInfos;
+        landObj.documentInfos = documentInfos;
+
+        // Ajouter des tableaux simples d'URLs pour faciliter l'utilisation
+        landObj.imageUrls = imageInfos.map(img => img.url);
+        landObj.documentUrls = documentInfos.map(doc => doc.url);
+
+        // Ajouter une image de couverture si disponible
+        landObj.coverImageUrl = imageInfos.length > 0 ? imageInfos[0].url : null;
+
+        return landObj as EnhancedLandResult;
+      });
+
+      this.logger.log(`[${new Date().toISOString()}] Found ${enhancedLands.length} lands without geometer validation.`);
+
+      return enhancedLands;
     } catch (error) {
       this.logger.error(`[${new Date().toISOString()}] Error finding lands without geometer validation. `, error.stack);
       throw new Error(`Failed to fetch lands without geometer validation: ${error.message}`);
     }
+
+
   }
-
-  /**
-   * Ajoute des images à un terrain en les téléversant sur IPFS
-   */
-  /* async addImagesToLand(landId: string, imageFiles: Array<Express.Multer.File>): Promise<string[]> {
-     try {
-       this.logger.log(`Adding ${imageFiles.length} images to land ${landId}. `);
- 
-       const land = await this.landModel.findById(landId);
-       if (!land) {
-         throw new NotFoundException(`Land with ID ${landId} not found`);
-       }
- 
-       const imageCIDs = [];
- 
-       // Téléverser chaque image sur IPFS
-       for (const file of imageFiles) {
-         const cid = await this.ipfsService.uploadFile(file.buffer);
-         imageCIDs.push(cid);
-       }
- 
-       // Mettre à jour le document avec les nouveaux CIDs
-       land.imageCIDs = [...(land.imageCIDs || []), ...imageCIDs];
-       await land.save();
- 
-       this.logger.log(`Successfully added ${imageCIDs.length} images to land ${landId}. `);
- 
-       return imageCIDs;
-     } catch (error) {
-       this.logger.error(`Error adding images to land ${landId}.`, error.stack);
-       throw new Error(`Failed to add images to land: ${error.message}`);
-     }
-   }*/
-
-
 }
