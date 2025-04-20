@@ -80,6 +80,7 @@ export interface ValidationResponse {
         isValid: boolean;
         timestamp: number;
         cidComments: string;
+        signature?: string; // Propriété optionnelle pour la signature dans lastValidation
       };
       validationProgress: {
         total: number;
@@ -93,6 +94,13 @@ export interface ValidationResponse {
         }[];
       };
     };
+    // Ajout du champ signature
+    signature?: {
+      value: string;
+      type: string;
+      standard: string;
+      timestamp: number;
+    };
   };
 }
 export interface ValidationMetadata {
@@ -105,6 +113,10 @@ export interface ValidationMetadata {
   timestamp: number;
   isValid: boolean;
   validationType: ValidatorType;
+  signature: string;
+  signatureType: string;
+  signatureStandard: string;
+  signedMessage: string;
 }
 
 export interface ValidationDocument {
@@ -112,7 +124,7 @@ export interface ValidationDocument {
   landId: string;
   blockchainLandId: string;
   validator: string;
-  validatorType: ValidatorType; // Champ obligatoire
+  validatorType: ValidatorType;
   timestamp: number;
   cidComments: string;
   isValidated: boolean;
@@ -120,6 +132,9 @@ export interface ValidationDocument {
   blockNumber: number;
   createdAt?: Date;
   updatedAt?: Date;
+  signature?: string;
+  signatureType?: string;
+  signedMessage?: string;
 }
 
 export interface ValidationProgressItem {

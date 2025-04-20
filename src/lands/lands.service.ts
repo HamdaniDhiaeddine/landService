@@ -299,6 +299,40 @@ export class LandService {
 
       this.logger.log(`Land with blockchain ID ${blockchainLandId} found`);
 
+      // Récupération de l'adresse Ethereum de l'utilisateur depuis le JWT
+      const validatorAddress = user.ethAddress;
+      if (!validatorAddress) {
+        throw new BadRequestException('Validator Ethereum address not found in JWT');
+      }
+
+      // Timestamp pour la signature
+      const timestamp = Math.floor(Date.now() / 1000);
+
+      // Message à signer (sans mentionner le relayer)
+      const messageToSign = `Validation officielle de terrain
+          ID du terrain: ${blockchainLandId}
+          Validateur: ${validatorAddress}
+          Rôle: ${user.role}
+          Horodatage: ${timestamp}
+          Validation: ${request.isValid ? 'Approuvé' : 'Rejeté'}`;
+
+      // Utiliser la clé privée du relayer existante
+      const relayerPrivateKey = process.env.PRIVATE_KEY;
+      if (!relayerPrivateKey) {
+        throw new InternalServerErrorException('System signature key not configured');
+      }
+
+      // Créer le wallet pour la signature
+      const signingWallet = new ethers.Wallet(relayerPrivateKey);
+
+      // Signer le message
+      const signature = await signingWallet.signMessage(messageToSign);
+
+      this.logger.log('Official signature generated for validation', {
+        validatorAddress,
+        role: user.role,
+        timestamp,
+      });
 
 
       // Créer les métadonnées de validation avec le rôle directement comme ValidatorType
@@ -311,7 +345,11 @@ export class LandService {
         landId: blockchainLandId,
         timestamp: Math.floor(Date.now() / 1000),
         isValid: request.isValid,
-        validationType: this.getValidatorTypeEnum(user.role)
+        validationType: this.getValidatorTypeEnum(user.role),
+        signature: signature,
+        signatureType: 'ECDSA',
+        signatureStandard: 'ISO/IEC 14888-3',
+        signedMessage: messageToSign
       };
 
       this.logger.log('Creating validation metadata', {
@@ -346,7 +384,10 @@ export class LandService {
         isValidated: request.isValid,
         txHash: validationResult.validationDetails.txHash,
         blockNumber: validationResult.validationDetails.blockNumber,
-        createdAt: new Date('2025-04-04 18:33:53')
+        createdAt: new Date(),
+        signature: signature,
+        signatureType: 'ECDSA',
+        signedMessage: messageToSign
       };
 
       const savedValidation = await this.validationModel.create(validationDoc);
@@ -364,7 +405,7 @@ export class LandService {
             }
           }
         },
-        { new: true }  // Retourner le document mis à jour
+        { new: true }
       );
 
       this.logger.log('Land document updated with validation', {
@@ -405,6 +446,12 @@ export class LandService {
               cidComments
             },
             validationProgress
+          },
+          signature: {
+            value: signature,
+            type: 'ECDSA',
+            standard: 'ISO/IEC 14888-3',
+            timestamp: timestamp
           }
         }
       };
