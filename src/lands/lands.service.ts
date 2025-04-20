@@ -179,8 +179,6 @@ export class LandService {
     return results;
   }
 
-
-
   async processFiles(filePaths: string[]): Promise<string[]> {
     if (!filePaths || filePaths.length === 0) {
       console.log('Aucun fichier à traiter');
@@ -569,59 +567,6 @@ export class LandService {
   }
 
 
-  private async calculateValidationProgress(blockchainLandId: string): Promise<ValidationProgress> {
-    const validations = await this.validationModel.find({ blockchainLandId }).exec();
-
-    this.logger.log('Calculating validation progress', {
-      blockchainLandId,
-      validationsCount: validations.length,
-      timestamp: '2025-04-04 18:26:46',
-      userLogin: 'dalikhouaja008'
-    });
-
-    const progress: ValidationProgress = {
-      total: 3,
-      completed: 0,
-      percentage: 0,
-      validations: [
-        {
-          role: 'NOTAIRE',
-          validated: false
-        },
-        {
-          role: 'GEOMETRE',
-          validated: false
-        },
-        {
-          role: 'EXPERT_JURIDIQUE',
-          validated: false
-        }
-      ]
-    };
-
-    validations.forEach(validation => {
-      const validatorRole = this.getValidatorRoleString(validation.validatorType);
-      const validationEntry = progress.validations.find(v => v.role === validatorRole);
-
-      if (validationEntry && validation.isValidated) {
-        validationEntry.validated = true;
-        validationEntry.timestamp = validation.timestamp;
-        validationEntry.validator = validation.validator;
-        progress.completed++;
-      }
-    });
-
-    progress.percentage = (progress.completed / progress.total) * 100;
-
-    this.logger.log('Validation progress calculated', {
-      blockchainLandId,
-      completed: progress.completed,
-      percentage: progress.percentage,
-    });
-
-    return progress;
-  }
-
   private getValidatorRoleString(type: ValidatorType): string {
     switch (type) {
       case ValidatorType.NOTAIRE:
@@ -647,20 +592,36 @@ export class LandService {
   }
 
   /**
-    * Récupère les terrains sans validation de géomètre avec URLs d'images
-    */
-  async findLandsWithoutGeometerValidation(): Promise<EnhancedLandResult[]> {
+ * Récupère les terrains qui n'ont pas été validés par un certain type de validateur
+ * @param validatorRole Le rôle du validateur (GEOMETRE, EXPERT_JURIDIQUE, NOTAIRE)
+ * @returns Liste des terrains avec URLs d'images et documents
+ */
+  async findLandsWithoutRoleValidation(validatorRole: string): Promise<EnhancedLandResult[]> {
     try {
-      this.logger.log(`[${new Date().toISOString()}] Searching for lands without geometer validation.`);
+      this.logger.log(`[${new Date().toISOString()}] Searching for lands without ${validatorRole} validation.`);
 
-      // Utilisez la valeur numérique 1 au lieu de 'GEOMETRE' pour le validatorType
-      const validatorTypeGeometre = 1; // 1 = Géomètre
+      // Mapper le rôle texte à sa valeur numérique selon l'enum ValidatorType
+      let validatorTypeValue: number;
 
-      // Requête modifiée avec le type numérique
+      switch (validatorRole) {
+        case 'GEOMETRE':
+          validatorTypeValue = 1; // ValidatorType.GEOMETRE
+          break;
+        case 'EXPERT_JURIDIQUE':
+          validatorTypeValue = 2; // ValidatorType.EXPERT_JURIDIQUE
+          break;
+        case 'NOTAIRE':
+          validatorTypeValue = 0; // ValidatorType.NOTAIRE
+          break;
+        default:
+          throw new BadRequestException(`Invalid validator role: ${validatorRole}`);
+      }
+
+      // Construire la requête pour trouver les terrains sans validation du rôle spécifié
       const query = {
         $or: [
-          { validations: { $size: 0 } },
-          { validations: { $not: { $elemMatch: { validatorType: validatorTypeGeometre } } } },
+          { validations: { $size: 0 } }, // Terrains sans aucune validation
+          { validations: { $not: { $elemMatch: { validatorType: validatorTypeValue } } } }, // Terrains sans validation du type spécifique
         ]
       };
 
@@ -720,14 +681,12 @@ export class LandService {
         return landObj as EnhancedLandResult;
       });
 
-      this.logger.log(`[${new Date().toISOString()}] Found ${enhancedLands.length} lands without geometer validation.`);
+      this.logger.log(`[${new Date().toISOString()}] Found ${enhancedLands.length} lands without ${validatorRole} validation.`);
 
       return enhancedLands;
     } catch (error) {
-      this.logger.error(`[${new Date().toISOString()}] Error finding lands without geometer validation. `, error.stack);
-      throw new Error(`Failed to fetch lands without geometer validation: ${error.message}`);
+      this.logger.error(`[${new Date().toISOString()}] Error finding lands without ${validatorRole} validation. `, error.stack);
+      throw new Error(`Failed to fetch lands without ${validatorRole} validation: ${error.message}`);
     }
-
-
   }
 }
