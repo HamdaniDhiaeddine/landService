@@ -170,117 +170,117 @@ export class DocusignService {
 
 
 
-/**
- * Crée une enveloppe pour la signature
- */
-async createEnvelope(
-    accessToken: string, 
-    documentBase64: string, 
-    signerEmail: string, 
-    signerName: string, 
-    title: string,
-    accountId?: string
-  ): Promise<string> {
-    try {
-      // Configurer l'authentification
-      this.apiClient.addDefaultHeader('Authorization', `Bearer ${accessToken}`);
-      
-      // Si l'ID du compte n'est pas fourni, le récupérer depuis les infos utilisateur
-      let accountIdToUse = accountId;
-      
-      if (!accountIdToUse) {
-        this.logger.log('ID de compte non fourni, tentative de récupération depuis l\'API userInfo');
-        
-        // Obtenir l'ID de compte de l'utilisateur
-        const userInfo = await this.getUserInfo(accessToken);
-        
-        // Log pour débogage
-        this.logger.log(`UserInfo reçu: ${JSON.stringify(userInfo).substring(0, 200)}...`);
-        
-        if (!userInfo.accounts || userInfo.accounts.length === 0) {
-          throw new Error("Aucun compte DocuSign disponible pour cet utilisateur");
+    /**
+     * Crée une enveloppe pour la signature
+     */
+    async createEnvelope(
+        accessToken: string,
+        documentBase64: string,
+        signerEmail: string,
+        signerName: string,
+        title: string,
+        accountId?: string
+    ): Promise<string> {
+        try {
+            // Configurer l'authentification
+            this.apiClient.addDefaultHeader('Authorization', `Bearer ${accessToken}`);
+
+            // Si l'ID du compte n'est pas fourni, le récupérer depuis les infos utilisateur
+            let accountIdToUse = accountId;
+
+            if (!accountIdToUse) {
+                this.logger.log('ID de compte non fourni, tentative de récupération depuis l\'API userInfo');
+
+                // Obtenir l'ID de compte de l'utilisateur
+                const userInfo = await this.getUserInfo(accessToken);
+
+                // Log pour débogage
+                this.logger.log(`UserInfo reçu: ${JSON.stringify(userInfo).substring(0, 200)}...`);
+
+                if (!userInfo.accounts || userInfo.accounts.length === 0) {
+                    throw new Error("Aucun compte DocuSign disponible pour cet utilisateur");
+                }
+
+                // Utiliser le premier compte disponible
+                // IMPORTANT: La propriété est 'account_id' (avec underscore) dans l'API REST directe
+                accountIdToUse = userInfo.accounts[0].account_id;
+
+                if (!accountIdToUse) {
+                    // Essayer l'autre format possible selon la version de l'API
+                    accountIdToUse = userInfo.accounts[0].accountId;
+                }
+
+                if (!accountIdToUse) {
+                    throw new Error("Impossible de déterminer l'ID de compte DocuSign");
+                }
+
+                this.logger.log(`ID de compte récupéré: ${accountIdToUse}`);
+            }
+
+            // Initialiser les API
+            const envelopesApi = new docusign.EnvelopesApi(this.apiClient);
+
+            // Créer la définition de l'enveloppe
+            const envDef = new docusign.EnvelopeDefinition();
+            envDef.emailSubject = `Validation juridique du terrain: ${title}`;
+
+            // Ajouter le document
+            const doc = new docusign.Document();
+            doc.documentBase64 = documentBase64;
+            doc.name = `Validation Juridique - ${title}`;
+            doc.fileExtension = 'pdf';
+            doc.documentId = '1';
+            envDef.documents = [doc];
+
+            // Ajouter le signataire
+            const signer = new docusign.Signer();
+            signer.email = signerEmail;
+            signer.name = signerName;
+            signer.recipientId = '1';
+            signer.routingOrder = '1';
+
+            // Ajouter des onglets (où signer, date, etc.)
+            const signHere = new docusign.SignHere();
+            signHere.documentId = '1';
+            signHere.pageNumber = '1';
+            signHere.xPosition = '200';
+            signHere.yPosition = '400';
+
+            const dateSignedTab = new docusign.DateSigned();
+            dateSignedTab.documentId = '1';
+            dateSignedTab.pageNumber = '1';
+            dateSignedTab.xPosition = '200';
+            dateSignedTab.yPosition = '450';
+
+            // Appliquer les onglets au signataire
+            const tabs = new docusign.Tabs();
+            tabs.signHereTabs = [signHere];
+            tabs.dateSignedTabs = [dateSignedTab];
+            signer.tabs = tabs;
+
+            // Ajouter le signataire à l'enveloppe
+            const recipients = new docusign.Recipients();
+            recipients.signers = [signer];
+            envDef.recipients = recipients;
+
+            // Définir le statut de l'enveloppe
+            envDef.status = 'sent';
+
+            this.logger.log(`Création d'une enveloppe avec l'ID de compte: ${accountIdToUse}`);
+
+            // Créer l'enveloppe - UTILISER L'ID DE COMPTE
+            const envelopeResponse = await envelopesApi.createEnvelope(accountIdToUse, { envelopeDefinition: envDef });
+
+            this.logger.log(`Enveloppe créée avec l'ID: ${envelopeResponse.envelopeId}`);
+            return envelopeResponse.envelopeId;
+        } catch (error) {
+            this.logger.error(`Erreur lors de la création de l'enveloppe: ${error.message}`);
+            if (error.response && error.response.data) {
+                this.logger.error(`Détails de l'erreur: ${JSON.stringify(error.response.data)}`);
+            }
+            throw error;
         }
-        
-        // Utiliser le premier compte disponible
-        // IMPORTANT: La propriété est 'account_id' (avec underscore) dans l'API REST directe
-        accountIdToUse = userInfo.accounts[0].account_id;
-        
-        if (!accountIdToUse) {
-          // Essayer l'autre format possible selon la version de l'API
-          accountIdToUse = userInfo.accounts[0].accountId;
-        }
-        
-        if (!accountIdToUse) {
-          throw new Error("Impossible de déterminer l'ID de compte DocuSign");
-        }
-        
-        this.logger.log(`ID de compte récupéré: ${accountIdToUse}`);
-      }
-      
-      // Initialiser les API
-      const envelopesApi = new docusign.EnvelopesApi(this.apiClient);
-      
-      // Créer la définition de l'enveloppe
-      const envDef = new docusign.EnvelopeDefinition();
-      envDef.emailSubject = `Validation juridique du terrain: ${title}`;
-      
-      // Ajouter le document
-      const doc = new docusign.Document();
-      doc.documentBase64 = documentBase64;
-      doc.name = `Validation Juridique - ${title}`;
-      doc.fileExtension = 'pdf';
-      doc.documentId = '1';
-      envDef.documents = [doc];
-      
-      // Ajouter le signataire
-      const signer = new docusign.Signer();
-      signer.email = signerEmail;
-      signer.name = signerName;
-      signer.recipientId = '1';
-      signer.routingOrder = '1';
-      
-      // Ajouter des onglets (où signer, date, etc.)
-      const signHere = new docusign.SignHere();
-      signHere.documentId = '1';
-      signHere.pageNumber = '1';
-      signHere.xPosition = '200';
-      signHere.yPosition = '400';
-      
-      const dateSignedTab = new docusign.DateSigned();
-      dateSignedTab.documentId = '1';
-      dateSignedTab.pageNumber = '1';
-      dateSignedTab.xPosition = '200';
-      dateSignedTab.yPosition = '450';
-      
-      // Appliquer les onglets au signataire
-      const tabs = new docusign.Tabs();
-      tabs.signHereTabs = [signHere];
-      tabs.dateSignedTabs = [dateSignedTab];
-      signer.tabs = tabs;
-      
-      // Ajouter le signataire à l'enveloppe
-      const recipients = new docusign.Recipients();
-      recipients.signers = [signer];
-      envDef.recipients = recipients;
-      
-      // Définir le statut de l'enveloppe
-      envDef.status = 'sent';
-      
-      this.logger.log(`Création d'une enveloppe avec l'ID de compte: ${accountIdToUse}`);
-      
-      // Créer l'enveloppe - UTILISER L'ID DE COMPTE
-      const envelopeResponse = await envelopesApi.createEnvelope(accountIdToUse, { envelopeDefinition: envDef });
-      
-      this.logger.log(`Enveloppe créée avec l'ID: ${envelopeResponse.envelopeId}`);
-      return envelopeResponse.envelopeId;
-    } catch (error) {
-      this.logger.error(`Erreur lors de la création de l'enveloppe: ${error.message}`);
-      if (error.response && error.response.data) {
-        this.logger.error(`Détails de l'erreur: ${JSON.stringify(error.response.data)}`);
-      }
-      throw error;
     }
-  }
 
     /**
      * Récupère les informations de l'utilisateur, y compris les comptes disponibles
@@ -329,5 +329,202 @@ async createEnvelope(
             .replace(/\+/g, '-')
             .replace(/\//g, '_')
             .replace(/=/g, '');
+    }
+
+    /**
+  * Crée une enveloppe pour signature embarquée (sans notification email)
+  */
+    async createEnvelopeForEmbeddedSigning(
+        accessToken: string,
+        documentBase64: string,
+        signerEmail: string,
+        signerName: string,
+        title: string,
+        clientUserId: string,
+        accountId: string
+    ): Promise<string> {
+        try {
+            this.logger.log(`Création d'une enveloppe pour ${signerName} (${signerEmail})`);
+
+            // Configuration de l'authentification
+            this.apiClient.addDefaultHeader('Authorization', `Bearer ${accessToken}`);
+
+            // Initialiser l'API pour les enveloppes
+            const envelopesApi = new docusign.EnvelopesApi(this.apiClient);
+
+            // Créer la définition de l'enveloppe
+            const envelope = new docusign.EnvelopeDefinition();
+
+            // Définir le statut sur "sent"
+            envelope.status = "sent";
+
+            // AJOUT : Définir l'objet (subject) et un message d'email
+            envelope.emailSubject = title || "Document à signer"; // ← AJOUT OBLIGATOIRE
+            envelope.emailBlurb = "Veuillez signer ce document"; // ← Optionnel mais recommandé
+
+            // Créer le document
+            const document = new docusign.Document();
+            document.documentBase64 = documentBase64;
+            document.name = title || "Document à signer";
+            document.fileExtension = "pdf";
+            document.documentId = "1";
+
+            // Ajouter le document à l'enveloppe
+            envelope.documents = [document];
+
+            // Créer un signataire avec clientUserId pour la signature embarquée
+            const signer = new docusign.Signer();
+            signer.email = signerEmail;
+            signer.name = signerName;
+            signer.recipientId = "1";
+            signer.routingOrder = "1";
+            signer.clientUserId = clientUserId; // Important pour la signature embarquée
+
+            // Ajouter une zone de signature
+            const signHere = new docusign.SignHere();
+            signHere.documentId = "1";
+            signHere.pageNumber = "1";
+            signHere.recipientId = "1";
+            signHere.xPosition = "150";
+            signHere.yPosition = "650";
+
+            // Ajouter le tag de signature au signataire
+            signer.tabs = new docusign.Tabs();
+            signer.tabs.signHereTabs = [signHere];
+
+            // Ajouter le signataire à l'enveloppe
+            const recipients = new docusign.Recipients();
+            recipients.signers = [signer];
+            envelope.recipients = recipients;
+
+            // Débogage: afficher les paramètres de l'enveloppe
+            this.logger.log(`Paramètres de l'enveloppe: ${JSON.stringify({
+                status: envelope.status,
+                emailSubject: envelope.emailSubject,
+                emailBlurb: envelope.emailBlurb,
+                documents: envelope.documents.length,
+                recipients: envelope.recipients.signers.length
+            }, null, 2)}`);
+
+            // Créer l'enveloppe
+            const result = await envelopesApi.createEnvelope(accountId, {
+                envelopeDefinition: envelope
+            });
+
+            this.logger.log(`Enveloppe créée avec succès, ID: ${result.envelopeId}`);
+            return result.envelopeId;
+        } catch (error) {
+            this.logger.error(`Erreur lors de la création de l'enveloppe: ${error.message}`);
+            if (error.response && error.response.data) {
+                this.logger.error(`Détails de l'erreur: ${JSON.stringify(error.response.data)}`);
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Crée une URL de signature embarquée pour un signataire
+     */
+    async createEmbeddedSigningUrl(
+        accessToken: string,
+        envelopeId: string,
+        accountId: string,
+        email: string,
+        name: string,
+        returnUrl: string,
+        clientUserId: string = '1000'
+    ): Promise<string> {
+        try {
+            this.logger.log(`Création d'URL de signature embarquée pour enveloppe: ${envelopeId}`);
+
+            // Configurer l'authentification
+            this.apiClient.addDefaultHeader('Authorization', `Bearer ${accessToken}`);
+
+            // Initialiser l'API pour les enveloppes
+            const envelopesApi = new docusign.EnvelopesApi(this.apiClient);
+
+            // Créer la définition de la vue du signataire
+            const recipientViewRequest = new docusign.RecipientViewRequest();
+
+            recipientViewRequest.returnUrl = returnUrl;
+            recipientViewRequest.authenticationMethod = 'none';
+            recipientViewRequest.email = email;
+            recipientViewRequest.userName = name;
+            recipientViewRequest.clientUserId = clientUserId;
+
+            this.logger.log(`Paramètres de la vue: email=${email}, nom=${name}, returnUrl=${returnUrl}`);
+
+            // Générer l'URL de signature
+            const viewResult = await envelopesApi.createRecipientView(
+                accountId,
+                envelopeId,
+                { recipientViewRequest }
+            );
+
+            this.logger.log(`URL de signature générée avec succès: ${viewResult.url.substring(0, 50)}...`);
+            return viewResult.url;
+        } catch (error) {
+            this.logger.error(`Erreur lors de la création de l'URL de signature: ${error.message}`);
+            if (error.response && error.response.data) {
+                this.logger.error(`Détails de l'erreur: ${JSON.stringify(error.response.data)}`);
+            }
+            throw error;
+        }
+    }
+
+    /**
+     * Récupère l'état d'une enveloppe
+     */
+    async getEnvelopeStatus(
+        accessToken: string,
+        envelopeId: string,
+        accountId: string
+    ): Promise<any> {
+        try {
+            // Configurer l'authentification
+            this.apiClient.addDefaultHeader('Authorization', `Bearer ${accessToken}`);
+
+            // Initialiser l'API
+            const envelopesApi = new docusign.EnvelopesApi(this.apiClient);
+
+            // Récupérer les informations d'état
+            const envelopeInfo = await envelopesApi.getEnvelope(accountId, envelopeId);
+
+            this.logger.log(`État de l'enveloppe ${envelopeId}: ${envelopeInfo.status}`);
+            return envelopeInfo;
+        } catch (error) {
+            this.logger.error(`Erreur lors de la récupération de l'état: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
+     * Récupère les documents signés d'une enveloppe
+     */
+    async getSignedDocument(
+        accessToken: string,
+        envelopeId: string,
+        accountId: string
+    ): Promise<Buffer> {
+        try {
+            // Configurer l'authentification
+            this.apiClient.addDefaultHeader('Authorization', `Bearer ${accessToken}`);
+
+            // Initialiser l'API
+            const envelopesApi = new docusign.EnvelopesApi(this.apiClient);
+
+            // Récupérer le document signé
+            const documentResponse = await envelopesApi.getDocument(
+                accountId,
+                envelopeId,
+                'combined'  // 'combined' récupère tous les documents de l'enveloppe combinés
+            );
+
+            this.logger.log(`Document récupéré pour l'enveloppe: ${envelopeId}`);
+            return Buffer.from(documentResponse);
+        } catch (error) {
+            this.logger.error(`Erreur lors de la récupération du document signé: ${error.message}`);
+            throw error;
+        }
     }
 }
