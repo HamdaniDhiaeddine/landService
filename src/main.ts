@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import bodyParser from 'body-parser';
+import cookieParser from 'cookie-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -9,7 +10,8 @@ async function bootstrap() {
   // Augmenter la limite de taille pour les requêtes
   app.use(bodyParser.json({ limit: '50mb' }));
   app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
-
+   // Middleware pour les cookies
+  app.use(cookieParser());
   
   // Configuration CORS pour permettre les requêtes cross-origin
   app.enableCors({
