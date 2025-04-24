@@ -8,6 +8,7 @@ import { IpfsModule } from './ipfs/ipfs.module'; // ✅ Import IpfsModule
 import { BlockchainModule } from './blockchain/blockchain.module';
 
 import { LandModule } from './lands/lands.module';
+import { DocusignModule } from './docusign/docusign.module';
 
 
 @Module({
@@ -22,7 +23,7 @@ import { LandModule } from './lands/lands.module';
     LocationModule,
     EncryptionModule,
     IpfsModule, // ✅ Register IpfsModule here
-    BlockchainModule, // Ajouter cette ligne
+    BlockchainModule, DocusignModule, // Ajouter cette ligne
   ],
 })
 export class AppModule {}

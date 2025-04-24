@@ -207,36 +207,39 @@ export class LandController {
   }
 
 
-  @Get('without-geometer-validation')
+  @Get('without-role-validation')
   /*@RequirePermissions({
     resource: Resource.LAND,
     actions: ['view_land']
   })*/
-  async getLandsWithoutGeometerValidation(@Req() req: Request) {
+  async getLandsWithoutRoleValidation(@Req() req: Request) {
     try {
       const user = (req as any).user as JWTPayload;
       console.log('\n====== User Auth Details ======');
+      console.log('Current Date and Time (UTC):', new Date().toISOString());
       console.log('User ID:', user.userId);
       console.log('Email:', user.email);
       console.log('Role:', user.role);
+      console.log('Ethereum Address:', user.ethAddress || 'Not available');
       console.log('=============================\n');
 
-      const lands: EnhancedLandResult[] = await this.landService.findLandsWithoutGeometerValidation();
+      // Utiliser le rôle de l'utilisateur pour filtrer les terrains
+      const lands: EnhancedLandResult[] = await this.landService.findLandsWithoutRoleValidation(user.role);
 
-      console.log(`✅ Retrieved ${lands.length} lands without geometer validation.`);
+      console.log(`✅ Retrieved ${lands.length} lands without ${user.role} validation.`);
 
       return {
         success: true,
         data: lands,
-        message: `Retrieved ${lands.length} lands without geometer validation`,
+        message: `Retrieved ${lands.length} lands without ${user.role} validation`,
       };
     } catch (error) {
-      console.error('❌ Error getting lands without geometer validation:', {
+      console.error('❌ Error getting lands without role validation:', {
         message: error.message,
         stack: error.stack,
       });
 
-      throw new InternalServerErrorException(`Failed to get lands without geometer validation: ${error.message}`);
+      throw new InternalServerErrorException(`Failed to get lands without role validation: ${error.message}`);
     }
   }
   @Get()
