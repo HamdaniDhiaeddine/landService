@@ -30,6 +30,7 @@ export class LandController {
     private readonly blockchainService: BlockchainService
   ) { }
   @Post()
+  @Post()
   @RequirePermissions({
     resource: Resource.LAND,
     actions: ['upload_land']
@@ -207,6 +208,8 @@ export class LandController {
   }
 
 
+
+
   @Get('without-role-validation')
   /*@RequirePermissions({
     resource: Resource.LAND,
@@ -242,14 +245,14 @@ export class LandController {
       throw new InternalServerErrorException(`Failed to get lands without role validation: ${error.message}`);
     }
   }
-  @Get()
-  /*@RequirePermissions({
-    resource: Resource.LAND,
-    actions: [Action.VIEW_OWN_LANDS]
-  })*/
-  async getAllLands() {
-    return this.blockchainService.getAllLands();
-  }
+   /**
+   * Récupère tous les terrains disponibles
+   */
+   @Get('catalogue')
+   async findAllLands(): Promise<EnhancedLandResult[]> {
+     this.logger.log('Endpoint: GET /lands - Récupération de tous les terrains');
+     return this.landService.findAllLands();
+   }
 
   @Get(':id')
   async getLandDetails(@Param('id') id: string) {

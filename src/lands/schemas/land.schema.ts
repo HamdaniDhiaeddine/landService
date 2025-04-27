@@ -67,13 +67,6 @@ export class Land {
   blockchainLandId;
 
   @Prop({
-    type: [{
-      validator: String,
-      validatorType: { type: Number, enum: ValidatorType },
-      timestamp: Number,
-      isValidated: Boolean,
-      cidComments: String,
-    }],
     default: []
   })
   validations: ValidationEntry[];

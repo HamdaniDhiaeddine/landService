@@ -46,7 +46,7 @@ export class DocusignController {
         }
     }
 
-    // Callback route reste sans guard car elle est appelée par DocuSign
+
     @Get('callback')
     async callback(
         @Query('code') code: string,
@@ -55,30 +55,41 @@ export class DocusignController {
         @Res() res: Response,
     ) {
         try {
+            const currentDateTime = '2025-04-27 09:46:19';
+            const currentUserLogin = 'nesssim';
+
+            this.logger.log(`${currentUserLogin} à ${currentDateTime} - DocuSign callback reçu avec code: ${code.substring(0, 10)}...`);
+
             if (!code) {
                 throw new Error('Code d\'autorisation manquant');
             }
 
             // Log tous les cookies pour débugger
-            this.logger.log(`Cookies reçus: ${JSON.stringify(req.cookies)}`);
+            this.logger.log(`${currentUserLogin} à ${currentDateTime} - Cookies reçus: ${JSON.stringify(req.cookies)}`);
 
             // Vérifier que l'état correspond à celui envoyé
             const savedState = req.cookies['docusign_state'];
-            this.logger.log(`État reçu: ${state}, état cookie: ${savedState}`);
+            this.logger.log(`${currentUserLogin} à ${currentDateTime} - État reçu: ${state}, état cookie: ${savedState}`);
 
             // Mode permissif pour la démo - accepter n'importe quel état si nous sommes en développement
             let tokenResponse;
             try {
                 // Essayer d'abord avec l'état reçu
                 tokenResponse = await this.docusignService.exchangeCodeForToken(code, state);
+
+                // Log pour afficher le token (première partie seulement pour la sécurité)
+                this.logger.log(`${currentUserLogin} à ${currentDateTime} - Token DocuSign obtenu: ${tokenResponse.accessToken.substring(0, 15)}...`);
+                this.logger.log(`${currentUserLogin} à ${currentDateTime} - Token expire dans: ${tokenResponse.expiresIn} secondes`);
+
             } catch (err) {
                 // Si ça échoue et que nous avons un état dans les cookies, essayer avec celui-là
                 if (savedState && savedState !== state) {
-                    this.logger.warn(`Tentative avec l'état du cookie: ${savedState}`);
+                    this.logger.warn(`${currentUserLogin} à ${currentDateTime} - Tentative avec l'état du cookie: ${savedState}`);
                     try {
                         tokenResponse = await this.docusignService.exchangeCodeForToken(code, savedState);
+                        this.logger.log(`${currentUserLogin} à ${currentDateTime} - Token obtenu avec l'état du cookie: ${tokenResponse.accessToken.substring(0, 15)}...`);
                     } catch (cookieErr) {
-                        this.logger.error(`Échec également avec l'état du cookie: ${cookieErr.message}`);
+                        this.logger.error(`${currentUserLogin} à ${currentDateTime} - Échec également avec l'état du cookie: ${cookieErr.message}`);
                         throw err; // relancer l'erreur originale
                     }
                 } else {
@@ -86,13 +97,13 @@ export class DocusignController {
                 }
             }
 
-            this.logger.log(`Token response: ${JSON.stringify(tokenResponse).substring(0, 100)}...`);
+            this.logger.log(`${currentUserLogin} à ${currentDateTime} - Token DocuSign obtenu avec succès, type: ${tokenResponse.tokenType}`);
 
             let userInfo;
             let accountId = null;
             try {
                 userInfo = await this.docusignService.getUserInfo(tokenResponse.accessToken);
-                this.logger.log(`UserInfo récupéré: ${JSON.stringify(userInfo).substring(0, 200)}...`);
+                this.logger.log(`${currentUserLogin} à ${currentDateTime} - UserInfo récupéré, nom: ${userInfo.name || 'Non disponible'}, email: ${userInfo.email || 'Non disponible'}`);
 
                 if (userInfo && userInfo.accounts && userInfo.accounts.length > 0) {
                     // IMPORTANT: La propriété est 'account_id' (avec underscore) dans l'API REST directe
@@ -103,21 +114,36 @@ export class DocusignController {
                         accountId = userInfo.accounts[0].accountId;
                     }
 
-                    this.logger.log(`ID de compte récupéré: ${accountId}`);
+                    this.logger.log(`${currentUserLogin} à ${currentDateTime} - ID de compte récupéré: ${accountId}`);
+                    this.logger.log(`${currentUserLogin} à ${currentDateTime} - Nom du compte: ${userInfo.accounts[0].account_name || 'Non disponible'}`);
+                    this.logger.log(`${currentUserLogin} à ${currentDateTime} - Base URL API: ${userInfo.accounts[0].base_uri || 'Non disponible'}`);
                 } else {
-                    this.logger.warn('Aucun compte trouvé dans les informations utilisateur');
+                    this.logger.warn(`${currentUserLogin} à ${currentDateTime} - Aucun compte trouvé dans les informations utilisateur`);
                 }
             } catch (userInfoErr) {
-                this.logger.warn(`Impossible de récupérer les informations utilisateur: ${userInfoErr.message}`);
+                this.logger.warn(`${currentUserLogin} à ${currentDateTime} - Impossible de récupérer les informations utilisateur: ${userInfoErr.message}`);
             }
 
             // Créer un JWT avec les informations DocuSign
-            const jwtToken = this.jwtService.sign({
+            const jwtPayload = {
                 docusignToken: tokenResponse.accessToken,
                 docusignTokenExpiry: Date.now() + (tokenResponse.expiresIn * 1000),
-                docusignAccountId: accountId, // Stockage de l'ID de compte dans le JWT
-                demo: true
-            });
+                docusignAccountId: accountId,
+                timestamp: currentDateTime,
+                userLogin: currentUserLogin,
+                docusignUserInfo: {
+                    name: userInfo?.name,
+                    email: userInfo?.email
+                }
+            };
+
+            // Log le contenu du payload JWT (sans le token complet)
+            const safePayload = { ...jwtPayload };
+            safePayload.docusignToken = `${safePayload.docusignToken.substring(0, 15)}...`;
+            this.logger.log(`${currentUserLogin} à ${currentDateTime} - Payload JWT: ${JSON.stringify(safePayload)}`);
+
+            const jwtToken = this.jwtService.sign(jwtPayload);
+            this.logger.log(`${currentUserLogin} à ${currentDateTime} - JWT généré: ${jwtToken.substring(0, 20)}...`);
 
             // Stocker le JWT dans un cookie
             res.cookie('docusign_auth', jwtToken, {
@@ -125,91 +151,50 @@ export class DocusignController {
                 maxAge: tokenResponse.expiresIn * 1000,
                 path: '/'
             });
+            this.logger.log(`${currentUserLogin} à ${currentDateTime} - Cookie docusign_auth défini avec expiration dans ${tokenResponse.expiresIn} secondes`);
 
-            // Créer une page HTML temporaire de succès (pour la démo)
-            this.logger.log('Authentification DocuSign réussie');
-            return res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="UTF-8">
-          <title>DocuSign Authentification Réussie</title>
-          <style>
-            body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }
-            .success { color: green; }
-            .token { background: #f5f5f5; padding: 10px; border-radius: 3px; word-break: break-all; text-align: left; }
-            button { background: #4CAF50; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; }
-          </style>
-          <script>
-            function copyToClipboard() {
-              const tokenField = document.getElementById('token');
-              navigator.clipboard.writeText(tokenField.textContent)
-                .then(() => {
-                  alert('Token copié dans le presse-papiers');
-                })
-                .catch(err => {
-                  console.error('Erreur lors de la copie: ', err);
-                });
-            }
-            
-            // Stocker le token dans localStorage
-            window.onload = function() {
-              localStorage.setItem('docusign_jwt', '${jwtToken}');
-              console.log('Token DocuSign stocké dans localStorage');
-            }
-          </script>
-        </head>
-        <body>
-          <div class="container">
-            <h1 class="success">Authentification DocuSign Réussie!</h1>
-            <p>Votre application est maintenant authentifiée avec DocuSign.</p>
-            <h3>JWT Token:</h3>
-            <div class="token" id="token">${jwtToken}</div>
-            <p><button onclick="copyToClipboard()">Copier le token</button></p>
-            <p>Ce token a été également stocké dans:</p>
-            <ul style="text-align: left;">
-              <li>Le cookie <strong>docusign_auth</strong> (httpOnly)</li>
-              <li>Le localStorage sous la clé <strong>docusign_jwt</strong></li>
-            </ul>
-            <p>Vous pouvez maintenant fermer cette fenêtre et continuer à utiliser votre application.</p>
-          </div>
-        </body>
-        </html>
-      `);
+            // Obtenir l'URL du frontend depuis la configuration
+            const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+            this.logger.log(`${currentUserLogin} à ${currentDateTime} - URL frontend: ${frontendUrl}`);
+
+            // Construire l'URL de redirection avec les paramètres
+            // IMPORTANT: Noter le #/ ajouté dans l'URL pour le routage côté client
+            const redirectUrl = `${frontendUrl}/#/docusign-auth?` +
+                `token=${encodeURIComponent(tokenResponse.accessToken)}` +
+                `&jwt=${encodeURIComponent(jwtToken)}` +
+                `&expires_in=${tokenResponse.expiresIn}` +
+                `&account_id=${encodeURIComponent(accountId || '')}` +
+                `&timestamp=${encodeURIComponent(currentDateTime)}` +
+                `&user=${encodeURIComponent(currentUserLogin)}`;
+
+            this.logger.log(`${currentUserLogin} à ${currentDateTime} - URL de redirection construite (longueur: ${redirectUrl.length})`);
+            this.logger.log(`${currentUserLogin} à ${currentDateTime} - Redirection vers le frontend: ${frontendUrl}/#/docusign-auth`);
+
+            // Rediriger vers le frontend
+            return res.redirect(redirectUrl);
+
         } catch (error) {
-            this.logger.error(`Erreur lors du traitement du callback: ${error.message}`);
+            const currentDateTime = '2025-04-27 09:46:19';
+            const currentUserLogin = 'nesssim';
 
-            // Page d'erreur pour la démo
-            return res.status(500).send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="UTF-8">
-          <title>Erreur d'authentification</title>
-          <style>
-            body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 5px; }
-            .error { color: red; }
-            .details { background: #f5f5f5; padding: 10px; border-radius: 3px; text-align: left; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <h1 class="error">Erreur d'authentification DocuSign</h1>
-            <p>Une erreur s'est produite pendant l'authentification:</p>
-            <div class="details">
-              <strong>Message:</strong> ${error.message}<br>
-              <strong>Code reçu:</strong> ${code || 'non fourni'}<br>
-              <strong>État reçu:</strong> ${state || 'non fourni'}<br>
-              <strong>État dans le cookie:</strong> ${req.cookies['docusign_state'] || 'non trouvé'}
-            </div>
-            <p>Vérifiez les logs du serveur pour plus de détails.</p>
-            <p><a href="/docusign/login">Réessayer l'authentification</a></p>
-          </div>
-        </body>
-        </html>
-      `);
+            this.logger.error(`${currentUserLogin} à ${currentDateTime} - Erreur lors du traitement du callback: ${error.message}`);
+            this.logger.error(`${currentUserLogin} à ${currentDateTime} - Stack trace: ${error.stack}`);
+
+            // Récupérer l'URL du frontend depuis la configuration
+            const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+
+            // Construire une URL de redirection d'erreur pour le frontend
+            // IMPORTANT: Noter le #/ ajouté dans l'URL pour le routage côté client
+            const errorUrl = `${frontendUrl}/#/docusign-auth-error?` +
+                `error=${encodeURIComponent(error.message)}` +
+                `&code=${encodeURIComponent(code || 'non fourni')}` +
+                `&state=${encodeURIComponent(state || 'non fourni')}` +
+                `&timestamp=${encodeURIComponent(currentDateTime)}` +
+                `&user=${encodeURIComponent(currentUserLogin)}`;
+
+            this.logger.error(`${currentUserLogin} à ${currentDateTime} - Redirection vers page d'erreur: ${frontendUrl}/#/docusign-auth-error`);
+
+            return res.redirect(errorUrl);
         }
     }
 
@@ -271,7 +256,7 @@ export class DocusignController {
     /**
      * Crée une enveloppe pour signature embarquée (sans notification email)
      */
-   // @UseGuards(JwtAuthGuard, PermissionGuard) 
+    // @UseGuards(JwtAuthGuard, PermissionGuard) 
     @Post('create-embedded-envelope')
     async createEmbeddedEnvelope(
         @Body() data: {
@@ -383,20 +368,20 @@ export class DocusignController {
             if (!docusignHeader) {
                 throw new Error('Token DocuSign non fourni');
             }
-            
-            const docusignJwt = docusignHeader.toString().startsWith('Bearer ') 
+
+            const docusignJwt = docusignHeader.toString().startsWith('Bearer ')
                 ? docusignHeader.toString().substring(7)
                 : docusignHeader.toString();
-                
+
             // Décoder le token JWT DocuSign
             const decodedDocusign = this.jwtService.verify(docusignJwt);
             const token = decodedDocusign.docusignToken;
             const accountId = decodedDocusign.docusignAccountId;
-            
+
             if (!token || !accountId) {
                 throw new Error('Token DocuSign invalide ou incomplet');
             }
-            
+
             // Générer l'URL de signature
             const signingUrl = await this.docusignService.createEmbeddedSigningUrl(
                 token,
@@ -407,9 +392,9 @@ export class DocusignController {
                 data.returnUrl || `${this.configService.get<string>('FRONTEND_URL')}/signing-complete`,
                 '1000'  // Même clientUserId que celui utilisé lors de la création de l'enveloppe
             );
-            
-            return { 
-                success: true, 
+
+            return {
+                success: true,
                 signingUrl,
                 envelopeId: data.envelopeId
             };
@@ -535,6 +520,94 @@ export class DocusignController {
         } catch (error) {
             this.logger.error(`Erreur lors de la récupération de l'historique: ${error.message}`);
             return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * Endpoint qui gère le retour après la signature DocuSign
+     */
+    @Get('signing-complete')
+    async signingComplete(
+        @Query('event') event: string,
+        @Query('envelopeId') envelopeId: string,
+        @Res() res: Response
+    ) {
+        try {
+            this.logger.log(`Signature complétée: ${event}, Envelope ID: ${envelopeId}`);
+
+            // Si vous avez une interface utilisateur frontend, vous pouvez rediriger vers celle-ci
+            if (process.env.FRONTEND_URL) {
+                return res.redirect(
+                    `${process.env.FRONTEND_URL}/signature-confirmation?status=success&event=${event}&envelopeId=${envelopeId}`
+                );
+            }
+
+            // Ou simplement renvoyer une page HTML de confirmation
+            const html = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Signature Complétée</title>
+                    <style>
+                        body {
+                            font-family: Arial, sans-serif;
+                            text-align: center;
+                            margin-top: 50px;
+                        }
+                        .success-message {
+                            color: #2ecc71;
+                            font-size: 24px;
+                        }
+                        .envelope-info {
+                            margin-top: 20px;
+                            font-size: 16px;
+                        }
+                        .back-button {
+                            display: inline-block;
+                            margin-top: 30px;
+                            padding: 10px 20px;
+                            background-color: #3498db;
+                            color: white;
+                            text-decoration: none;
+                            border-radius: 4px;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="success-message">
+                        <h1>Signature complétée avec succès!</h1>
+                    </div>
+                    <div class="envelope-info">
+                        ${envelopeId ? `Identifiant d'enveloppe: ${envelopeId}` : ''}
+                    </div>
+                    <a href="/" class="back-button">Retour à l'application</a>
+                    
+                    <script>
+                        // Si cette page est dans une iframe, notifier le parent
+                        if (window.parent && window !== window.parent) {
+                            window.parent.postMessage({
+                                status: 'signing_complete',
+                                envelopeId: '${envelopeId}',
+                                event: '${event}'
+                            }, '*');
+                            
+                            // Fermer cette fenêtre après quelques secondes si c'est une popup
+                            setTimeout(function() {
+                                window.close();
+                            }, 3000);
+                        }
+                    </script>
+                </body>
+                </html>
+            `;
+
+            return res.type('html').send(html);
+        } catch (error) {
+            this.logger.error(`Erreur lors du traitement de la fin de signature: ${error.message}`);
+            return res.status(500).json({
+                success: false,
+                error: error.message
+            });
         }
     }
 }
