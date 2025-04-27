@@ -11,7 +11,7 @@ import { BlockchainService } from 'src/blockchain/services/blockchain.service';
 import { ethers } from 'ethers';
 import { RelayerService } from 'src/blockchain/services/relayer.service';
 import { ObjectId } from 'mongodb';
-import { LandValidationStatus, ValidationDocument, ValidationMetadata, ValidationProgress, ValidationRequest, ValidationResponse, ValidatorType } from 'src/blockchain/interfaces/validation.interface';
+import { LandValidationStatus, ValidationDocument, ValidationEntry, ValidationMetadata, ValidationProgress, ValidationRequest, ValidationResponse, ValidatorType } from 'src/blockchain/interfaces/validation.interface';
 import { JWTPayload } from 'src/auth/interfaces/jwt-payload.interface';
 import { Validation } from './schemas/validation.schema';
 import { ValidateLandDto } from './dto/validate-land.dto';
@@ -28,7 +28,6 @@ export class LandService {
     private readonly ipfsService: IpfsService,
     private readonly blockchainService: BlockchainService,
     private readonly encryptionService: EncryptionService,
-    private readonly relayerService: RelayerService
   ) { }
 
   async create(createLandDto: CreateLandDto, ownerAddress: string): Promise<Land> {
@@ -70,8 +69,6 @@ export class LandService {
       const cidsData = {
         documentsCIDs: documentsCIDs,
         imagesCIDs: imagesCIDs,
-        timestamp: new Date().toISOString(),
-        user: 'nesssim'
       };
 
       // Générer un CID combiné
@@ -134,6 +131,7 @@ export class LandService {
       );
     }
   }
+
 
   // Méthode améliorée pour traiter les buffers directement
   private async processBuffers(files: FileBufferDto[], fileType: string): Promise<string[]> {
@@ -279,33 +277,33 @@ export class LandService {
   async validateLand(request: ValidationRequest, user: JWTPayload): Promise<ValidationResponse> {
     try {
       this.logger.log(`Starting validation process for land ID: ${request.landId} by user: ${user.userId}`);
-
+  
       const blockchainLandId = request.landId;
       if (!blockchainLandId) {
         throw new BadRequestException('Blockchain Land ID is required');
       }
-
+  
       // Vérifier que le rôle de l'utilisateur est un type de validateur valide
       if (!(user.role in ValidatorType)) {
         throw new BadRequestException(`Invalid validator role: ${user.role}`);
       }
-
+  
       const land = await this.landModel.findOne({ blockchainLandId: blockchainLandId });
       if (!land) {
         throw new BadRequestException(`Land with blockchain ID ${blockchainLandId} not found`);
       }
-
+  
       this.logger.log(`Land with blockchain ID ${blockchainLandId} found`);
-
+  
       // Récupération de l'adresse Ethereum de l'utilisateur depuis le JWT
       const validatorAddress = user.ethAddress;
       if (!validatorAddress) {
         throw new BadRequestException('Validator Ethereum address not found in JWT');
       }
-
+  
       // Timestamp pour la signature
       const timestamp = Math.floor(Date.now() / 1000);
-
+  
       // Message à signer (sans mentionner le relayer)
       const messageToSign = `Validation officielle de terrain
           ID du terrain: ${blockchainLandId}
@@ -313,26 +311,25 @@ export class LandService {
           Rôle: ${user.role}
           Horodatage: ${timestamp}
           Validation: ${request.isValid ? 'Approuvé' : 'Rejeté'}`;
-
+  
       // Utiliser la clé privée du relayer existante
       const relayerPrivateKey = process.env.PRIVATE_KEY;
       if (!relayerPrivateKey) {
         throw new InternalServerErrorException('System signature key not configured');
       }
-
+  
       // Créer le wallet pour la signature
       const signingWallet = new ethers.Wallet(relayerPrivateKey);
-
+  
       // Signer le message
       const signature = await signingWallet.signMessage(messageToSign);
-
+  
       this.logger.log('Official signature generated for validation', {
         validatorAddress,
         role: user.role,
         timestamp,
       });
-
-
+  
       // Créer les métadonnées de validation avec le rôle directement comme ValidatorType
       const validationMetadata: ValidationMetadata = {
         text: request.comment,
@@ -341,7 +338,7 @@ export class LandService {
         validatorEmail: user.email,
         userId: user.userId,
         landId: blockchainLandId,
-        timestamp: Math.floor(Date.now() / 1000),
+        timestamp: timestamp,
         isValid: request.isValid,
         validationType: this.getValidatorTypeEnum(user.role),
         signature: signature,
@@ -349,20 +346,20 @@ export class LandService {
         signatureStandard: 'ISO/IEC 14888-3',
         signedMessage: messageToSign
       };
-
+  
       this.logger.log('Creating validation metadata', {
         blockchainLandId,
         validator: user.ethAddress,
         validatorRole: user.role,
       });
-
+  
       // Upload des commentaires sur IPFS
       const cidComments = await this.ipfsService.uploadComment(
         JSON.stringify(validationMetadata)
       );
-
+  
       this.logger.log('Successfully uploaded comments to IPFS', { cidComments });
-
+  
       // Valider via le relayer
       const validationResult = await this.blockchainService.validateLandWithRelayer({
         landId: blockchainLandId,
@@ -370,63 +367,75 @@ export class LandService {
         cidComments,
         isValid: request.isValid
       });
-
-      // Créer le document de validation
-      const validationDoc: ValidationDocument = {
+  
+      // Récupérer le txHash de la transaction blockchain
+      const txHash = validationResult.validationDetails.txHash;
+  
+      // Création du document selon le schema Mongoose, en suivant ValidationDocument
+      const validationDoc = {
         landId: land._id.toString(),
         blockchainLandId: blockchainLandId,
         validator: user.ethAddress,
-        validatorType: user.role as unknown as ValidatorType, // Cast direct
+        validatorType: this.getValidatorTypeEnum(user.role),
         timestamp: validationMetadata.timestamp,
-        cidComments,
+        cidComments: cidComments,
         isValidated: request.isValid,
-        txHash: validationResult.validationDetails.txHash,
+        txHash: txHash,
         blockNumber: validationResult.validationDetails.blockNumber,
-        createdAt: new Date(),
         signature: signature,
-        signatureType: 'ECDSA',
+        signatureType: 'ECDSA', 
         signedMessage: messageToSign
       };
-
+  
       const savedValidation = await this.validationModel.create(validationDoc);
-
+  
+      // Enrichir ValidationEntry avec txHash et signature
+      const validationEntry: ValidationEntry = {
+        validator: user.ethAddress,
+        validatorType: this.getValidatorTypeEnum(user.role),
+        timestamp: validationMetadata.timestamp,
+        isValidated: request.isValid,
+        cidComments: cidComments,
+        txHash: txHash,            
+        signature: signature,        
+        signatureType: 'ECDSA',      
+        signedMessage: messageToSign 
+      };
+  
+      // Mettre à jour le document land avec la nouvelle validation enrichie
       const updateResult = await this.landModel.findOneAndUpdate(
         { blockchainLandId: blockchainLandId },
         {
           $push: {
-            validations: {
-              validator: user.ethAddress,
-              validatorType: this.getValidatorTypeEnum(user.role),
-              timestamp: validationMetadata.timestamp,
-              isValidated: request.isValid,
-              cidComments: cidComments
-            }
+            validations: validationEntry // Utiliser ValidationEntry enrichie
           }
         },
         { new: true }
       );
-
+  
       this.logger.log('Land document updated with validation', {
         landId: land._id,
-        validationsCount: updateResult.validations ? updateResult.validations.length : 0
+        validationsCount: updateResult.validations ? updateResult.validations.length : 0,
+        txHash: txHash // Log du txHash
       });
-
+  
       // Calculer la progression de la validation
       const validationProgress = await this.calculateValidationProgressFromLand(updateResult);
-
+  
       const newStatus = this.determineLandStatus(validationProgress);
       await this.landModel.findOneAndUpdate(
         { blockchainLandId: blockchainLandId },
         { $set: { status: newStatus } },
         { new: true }
       );
-
+  
+      // Construction de la réponse avec tous les attributs enrichis
       const response: ValidationResponse = {
         success: true,
         message: 'Validation processed successfully',
         data: {
           transaction: {
-            hash: validationResult.validationDetails.txHash,
+            hash: txHash, 
             blockNumber: validationResult.validationDetails.blockNumber,
             timestamp: validationMetadata.timestamp
           },
@@ -441,7 +450,9 @@ export class LandService {
               validatorRole: user.role,
               isValid: request.isValid,
               timestamp: validationMetadata.timestamp,
-              cidComments
+              cidComments: cidComments,
+              //txHash: txHash,              
+              signature: signature         
             },
             validationProgress
           },
@@ -453,16 +464,15 @@ export class LandService {
           }
         }
       };
-
+  
       this.logger.log('Validation completed successfully', {
         blockchainLandId: blockchainLandId,
         validator: user.ethAddress,
         role: user.role,
-        txHash: validationResult.validationDetails.txHash,
+        txHash: txHash,
       });
-
+  
       return response;
-
     } catch (error) {
       this.logger.error('Validation failed', {
         error,
@@ -687,6 +697,59 @@ export class LandService {
     } catch (error) {
       this.logger.error(`[${new Date().toISOString()}] Error finding lands without ${validatorRole} validation. `, error.stack);
       throw new Error(`Failed to fetch lands without ${validatorRole} validation: ${error.message}`);
+    }
+  }
+
+  /**
+  * Récupère tous les terrains avec les URLs d'images et de documents
+  * @returns Liste des terrains avec toutes les propriétés et URLs d'images et documents
+  */
+  async findAllLands(): Promise<EnhancedLandResult[]> {
+    try {
+      this.logger.log(`[${new Date().toISOString()}] Fetching all lands.`);
+
+      // Exécuter la requête pour récupérer tous les terrains sans filtre
+      const lands = await this.landModel.find().exec();
+
+      // Transformer les terrains pour inclure les URLs des images et documents
+      const enhancedLands: EnhancedLandResult[] = lands.map(land => {
+        // Convertir en objet simple si c'est un document Mongoose
+        const landObj: any = land.toObject ? land.toObject() : { ...land };
+
+        // Créer des objets images avec URLs
+        const imageInfos: IpfsFileInfo[] = (landObj.imageCIDs || []).map((cid, index) => ({
+          cid: cid,
+          url: this.ipfsService.getIPFSUrl(cid),
+          index: index + 1
+        }));
+
+        // Créer des objets documents avec URLs
+        const documentInfos: IpfsFileInfo[] = (landObj.ipfsCIDs || []).map((cid, index) => ({
+          cid: cid,
+          url: this.ipfsService.getIPFSUrl(cid),
+          index: index + 1
+        }));
+
+        // Ajouter ces nouvelles propriétés à l'objet terrain
+        landObj.imageInfos = imageInfos;
+        landObj.documentInfos = documentInfos;
+
+        // Ajouter des tableaux simples d'URLs pour faciliter l'utilisation
+        landObj.imageUrls = imageInfos.map(img => img.url);
+        landObj.documentUrls = documentInfos.map(doc => doc.url);
+
+        // Ajouter une image de couverture si disponible
+        landObj.coverImageUrl = imageInfos.length > 0 ? imageInfos[0].url : null;
+
+        return landObj as EnhancedLandResult;
+      });
+
+      this.logger.log(`[${new Date().toISOString()}] Successfully retrieved ${enhancedLands.length} lands.`);
+
+      return enhancedLands;
+    } catch (error) {
+      this.logger.error(`[${new Date().toISOString()}] Error fetching lands: `, error.stack);
+      throw new Error(`Failed to fetch lands: ${error.message}`);
     }
   }
 }

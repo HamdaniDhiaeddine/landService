@@ -128,7 +128,7 @@ export interface ValidationDocument {
   timestamp: number;
   cidComments: string;
   isValidated: boolean;
-  txHash: string;
+  txHash: string;                
   blockNumber: number;
   createdAt?: Date;
   updatedAt?: Date;
@@ -147,7 +147,7 @@ export interface ValidationProgressItem {
 
 // Les interfaces de progression de validation
 export interface ValidationProgressValidation {
-  role: string;           // Changé de 'type' à 'role'
+  role: string;     
   validated: boolean;
   timestamp?: number;
   validator?: string;
@@ -160,12 +160,14 @@ export interface ValidationProgress {
   validations: ValidationProgressValidation[];
 }
 
-// Interface pour la structure de validation
 export interface ValidationEntry {
   validator: string;
   validatorType: ValidatorType;
   timestamp: number;
   isValidated: boolean;
   cidComments: string;
+  txHash: string;        
+  signature?: string;     
+  signatureType?: string;  
+  signedMessage?: string;  
 }
-
