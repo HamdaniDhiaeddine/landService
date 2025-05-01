@@ -29,6 +29,14 @@ export class CreateLandDto {
   //@Min(0)
   surface: string;
 
+  @IsNumber()
+  @IsOptional()
+  totalTokens?: number;
+
+  @IsString()
+  @IsOptional()
+  pricePerToken?: string;
+
   @IsOptional()
   @IsString()
   latitude?: string;
@@ -39,7 +47,7 @@ export class CreateLandDto {
 
   @IsString()
   status: string;
-  
+
   @IsString()
   landtype: string;
 

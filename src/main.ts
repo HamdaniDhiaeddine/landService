@@ -15,9 +15,10 @@ async function bootstrap() {
   
   // Configuration CORS pour permettre les requêtes cross-origin
   app.enableCors({
-    origin: true, // Autorise toutes les origines ou spécifiez les origines autorisées: ['http://localhost:3000']
+    origin: true, 
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    //allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-DocuSign-Token'],
     credentials: true,
   });
   

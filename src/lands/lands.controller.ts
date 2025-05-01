@@ -30,11 +30,10 @@ export class LandController {
     private readonly blockchainService: BlockchainService
   ) { }
   @Post()
-  @Post()
-  @RequirePermissions({
-    resource: Resource.LAND,
-    actions: ['upload_land']
-  })
+  /*@RequirePermissions({
+     resource: Resource.LAND,
+     actions: ['upload_land']
+   })*/
   @UseInterceptors(
     FileFieldsInterceptor([
       { name: 'documents', maxCount: 5 },
@@ -245,14 +244,14 @@ export class LandController {
       throw new InternalServerErrorException(`Failed to get lands without role validation: ${error.message}`);
     }
   }
-   /**
-   * Récupère tous les terrains disponibles
-   */
-   @Get('catalogue')
-   async findAllLands(): Promise<EnhancedLandResult[]> {
-     this.logger.log('Endpoint: GET /lands - Récupération de tous les terrains');
-     return this.landService.findAllLands();
-   }
+  /**
+  * Récupère tous les terrains disponibles
+  */
+  @Get('catalogue')
+  async findAllLands(): Promise<EnhancedLandResult[]> {
+    this.logger.log('Endpoint: GET /lands - Récupération de tous les terrains');
+    return this.landService.findAllLands();
+  }
 
   @Get(':id')
   async getLandDetails(@Param('id') id: string) {
@@ -473,4 +472,26 @@ export class LandController {
 
     return this.landService.validateLand(validateRequest, user);
   }
+
+  @Post('tokenize/:id')
+  @UseGuards(JwtAuthGuard)
+  async tokenizeLand(@Param('id') id: string) {
+    try {
+      const landId = Number(id);
+      if (isNaN(landId) || landId <= 0) {
+        throw new BadRequestException('Invalid land ID. Must be a positive number.');
+      }
+      
+      return await this.landService.tokenizeLandById(landId);
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new HttpException(
+        `Failed to tokenize land: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+  
 }

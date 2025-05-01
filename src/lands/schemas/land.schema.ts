@@ -1,7 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { ValidatorType, LandValidationStatus, LandType, ValidationEntry } from 'src/blockchain/interfaces/validation.interface';
-
-
+import { Document } from 'mongoose';
 
 @Schema({ timestamps: true })
 export class Land {
@@ -70,6 +69,7 @@ export class Land {
     default: []
   })
   validations: ValidationEntry[];
+
   @Prop({
     type: Map,
     of: Boolean,
@@ -77,7 +77,37 @@ export class Land {
   })
   amenities: Map<string, boolean>;
 
+  // NOUVEAUX CHAMPS POUR LA TOKENISATION
+
+  @Prop({ default: false })
+  isTokenized: boolean;
   
+  @Prop()
+  tokenizationTxHash: string;
+  
+  @Prop()
+  tokenizationTimestamp: Date;
+  
+  @Prop()
+  tokenizationError: string;
+  
+  @Prop({
+    type: [{
+      timestamp: { type: Date, default: Date.now },
+      error: String,
+      txHash: String
+    }],
+    default: []
+  })
+  tokenizationAttempts: { timestamp: Date, error?: string, txHash?: string }[];
+  
+  // Nombre de tokens disponibles (utile à suivre)
+  @Prop({ default: 0 })
+  availableTokens: number;
+  
+  // Information sur les tokens créés à partir de ce terrain
+  @Prop({ type: [Number], default: [] })
+  tokenIds: number[];
 }
 
 export type LandDocument = Land & Document;
