@@ -162,16 +162,32 @@ export class BlockchainService implements OnModuleInit {
 
       const surface = BigInt(landData.surface);
       const totalTokens = BigInt(landData.totalTokens);
-      const pricePerToken = ethers.parseEther(landData.pricePerToken);
+
+      // Pour la démo, nous pouvons réduire le prix automatiquement
+      // Convertir le prix en ETH, puis le réduire si nécessaire
+      let pricePerTokenETH = parseFloat(landData.pricePerToken);
+
+      // Si le prix est trop élevé pour une démo, le réduire (par exemple à 0.01 ETH maximum)
+      const maxDemoPrice = 0.01; // Prix maximum pour la démo en ETH
+      if (pricePerTokenETH > maxDemoPrice) {
+        this.logger.log(`Reducing price for demo from ${pricePerTokenETH} ETH to ${maxDemoPrice} ETH`);
+        pricePerTokenETH = maxDemoPrice;
+      }
+
+      // Convertir en wei pour le contrat
+      const pricePerTokenWei = ethers.parseEther(pricePerTokenETH.toString());
+
+      this.logger.log(`Registering land with ${totalTokens} tokens at ${ethers.formatEther(pricePerTokenWei)} ETH per token`);
 
       const tx = await this.landRegistry.registerLand(
         landData.location,
         surface,
         totalTokens,
-        pricePerToken,
+        pricePerTokenWei,
         landData.metadataCID,
         {
-          from: landData.owner
+          from: landData.owner,
+          gasLimit: BigInt(300000)
         }
       );
 
@@ -189,12 +205,16 @@ export class BlockchainService implements OnModuleInit {
       return {
         landId: landId.toString(),
         hash: receipt.hash,
-        blockNumber: receipt.blockNumber
+        blockNumber: receipt.blockNumber,
+        pricePerToken: ethers.formatEther(pricePerTokenWei), // Renvoyer le prix réellement utilisé
+        totalTokens: totalTokens.toString()
       };
     } catch (error) {
       console.error('Error registering land:', error);
       throw new Error(`Erreur lors de l'enregistrement du terrain: ${error.message}`);
     }
+
+
   }
 
   async getAllLands() {
@@ -980,6 +1000,237 @@ export class BlockchainService implements OnModuleInit {
         message: `Failed to tokenize land: ${error.message}`,
         error: error.message
       };
+    }
+  }
+
+  /**
+ * Mint plusieurs tokens pour un terrain donné en une seule transaction
+ * @param landId ID du terrain
+ * @param quantity Nombre de tokens à minter
+ * @param value Montant en ETH à payer pour les tokens (prix total)
+ * @returns Détails de la transaction et les IDs des tokens créés
+ */
+  async mintMultipleTokens(landId: number, quantity: number, value: string): Promise<any> {
+    try {
+      this.logger.log(`Starting mint multiple tokens process for land ID: ${landId}, quantity: ${quantity}, value: ${value}`);
+
+      // 1. Vérifier si le terrain existe et est tokenisé
+      const [
+        isTokenized,
+        status,
+        availableTokens,
+        pricePerToken,
+        cid
+      ] = await this.landRegistry.getLandDetails(landId);
+
+      if (!isTokenized) {
+        throw new Error(`Land ID ${landId} is not tokenized yet. Please tokenize the land first.`);
+      }
+
+      if (status.toString() !== "1") {
+        throw new Error(`Land ID ${landId} is not validated. Current status: ${this.getValidationStatusString(Number(status))}`);
+      }
+
+      if (Number(availableTokens) < quantity) {
+        throw new Error(`Not enough tokens available for land ID ${landId}. Available: ${availableTokens}, Requested: ${quantity}`);
+      }
+
+      // 2. Convertir la valeur en wei
+      let valueInWei = value;
+      if (!value.includes('e+') && !value.startsWith('0x')) {
+        valueInWei = ethers.parseEther(value).toString();
+        this.logger.log(`Converted value from ${value} ETH to ${valueInWei} wei`);
+      }
+
+      // 3. Vérifier que la valeur est suffisante pour tous les tokens
+      const priceInWeiPerToken = pricePerToken; // Déjà en wei depuis le smart contract
+      const totalPriceInWei = BigInt(priceInWeiPerToken) * BigInt(quantity);
+
+      if (BigInt(valueInWei) < totalPriceInWei) {
+        throw new Error(`Insufficient payment. Required: ${ethers.formatEther(totalPriceInWei.toString())} ETH, Provided: ${ethers.formatEther(valueInWei)} ETH`);
+      }
+
+      // 4. Appeler le smart contract
+      this.logger.log(`Calling mintMultipleTokens with landId: ${landId}, quantity: ${quantity}, value: ${valueInWei} wei`);
+
+      // Créer une interface pour encoder les paramètres correctement
+      const functionAbi = [
+        "function mintMultipleTokens(uint256 _landId, uint256 _quantity) payable returns (uint256[])"
+      ];
+      const iface = new ethers.Interface(functionAbi);
+
+      // Encoder les données d'appel
+      const encodedData = iface.encodeFunctionData("mintMultipleTokens", [landId, quantity]);
+      this.logger.log(`Encoded function data: ${encodedData}`);
+
+      // Obtenir l'adresse du contrat
+      const contractAddress = await this.landToken.getAddress();
+
+      // Envoyer la transaction avec les données encodées
+      const tx = await this.landToken.runner.sendTransaction({
+        to: contractAddress,
+        data: encodedData,
+        value: BigInt(valueInWei),
+        gasLimit: BigInt(1000000)  // Augmenter la limite de gaz pour garantir l'exécution
+      });
+      // 5. Attendre la confirmation
+      this.logger.log(`Transaction sent: ${tx.hash}`);
+      const receipt = await tx.wait();
+
+      // 6. Rechercher l'événement TokensBatchMinted
+      let tokenIds = [];
+
+      // Créer une interface pour les événements
+      const eventsAbi = [
+        "event TokensBatchMinted(uint256 indexed landId, address indexed recipient, uint256 quantity, uint256[] tokenIds)",
+        "event TokenMinted(uint256 indexed landId, uint256 indexed tokenId, address owner)"
+      ];
+      const eventsInterface = new ethers.Interface(eventsAbi);
+
+      // Parcourir les logs pour trouver les événements
+      for (const log of receipt.logs) {
+        try {
+          // Essayer de décoder le log
+          const parsedLog = eventsInterface.parseLog({
+            topics: log.topics,
+            data: log.data
+          });
+
+          if (parsedLog && parsedLog.name === 'TokensBatchMinted') {
+            // Le 4ème argument contient le tableau des IDs
+            const mintedTokenIds = parsedLog.args[3];
+            tokenIds = [...mintedTokenIds].map(id => id.toString());
+            this.logger.log(`Found TokensBatchMinted event with ${mintedTokenIds.length} tokens`);
+            break;
+          }
+          else if (parsedLog && parsedLog.name === 'TokenMinted') {
+            // Le 2ème argument contient l'ID du token
+            tokenIds.push(parsedLog.args[1].toString());
+            this.logger.log(`Found TokenMinted event for token ID ${parsedLog.args[1]}`);
+          }
+        } catch (parseError) {
+          // Ce log n'est pas un événement que nous cherchons - ignorer l'erreur
+        }
+      }
+
+      this.logger.log(`Found ${tokenIds.length} token IDs: ${tokenIds.join(', ')}`);
+
+      // 7. Journaliser le succès
+      this.logger.log(`Tokens minted successfully for land ID ${landId}`, {
+        transactionHash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        gasUsed: receipt.gasUsed.toString(),
+        tokenIds: tokenIds,
+        quantity: quantity
+      });
+
+      return {
+        hash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        tokenIds: tokenIds,
+        landId,
+        quantity
+      };
+    } catch (error) {
+      this.logger.error(`Error minting multiple tokens for land ID ${landId}:`, error);
+
+      // Améliorer le message d'erreur selon le type d'erreur
+      let errorMessage = `Error minting multiple tokens: ${error.message}`;
+
+      if (error.message.includes('insufficient funds')) {
+        errorMessage = 'Insufficient funds to cover the price of tokens and gas fees';
+      } else if (error.message.includes('LandNotTokenized')) {
+        errorMessage = 'The land is not tokenized yet';
+      } else if (error.message.includes('LandNotValidated')) {
+        errorMessage = 'The land is not validated yet';
+      } else if (error.message.includes('NoTokensAvailable')) {
+        errorMessage = 'Not enough tokens available for this land';
+      } else if (error.message.includes('InsufficientPayment')) {
+        errorMessage = 'Insufficient payment to buy the tokens';
+      }
+
+      throw new Error(errorMessage);
+    }
+  }
+
+  /**
+   * Mint plusieurs tokens pour un utilisateur spécifié
+   * @param landId ID du terrain
+   * @param recipient Adresse Ethereum qui recevra les tokens
+   * @param quantity Nombre de tokens à minter
+   * @param value Montant en ETH à payer pour les tokens
+   * @returns Détails de la transaction
+   */
+  async mintMultipleTokensForUser(landId: number, recipient: string, quantity: number, value: string): Promise<any> {
+    try {
+      this.logger.log(`Minting ${quantity} tokens for land ID ${landId} to recipient ${recipient} with value ${value}`);
+
+      // Vérifier que l'adresse du destinataire est valide
+      if (!ethers.isAddress(recipient)) {
+        throw new Error(`Invalid recipient address: ${recipient}`);
+      }
+
+      // Convertir la valeur ETH en wei
+      const valueInWei = ethers.parseEther(value);
+
+      // Appeler la fonction mintMultipleTokensForUser du contrat
+      const tx = await this.landToken.mintMultipleTokensForUser(landId, recipient, quantity, {
+        value: valueInWei,
+        gasLimit: BigInt(500000)
+      });
+
+      const receipt = await tx.wait();
+
+      this.logger.log(`${quantity} tokens minted successfully for land ID ${landId} to ${recipient}`);
+      this.logger.log(`Transaction hash: ${receipt.hash}`);
+
+      // Extraire les IDs des tokens depuis l'événement
+      let tokenIds = [];
+      const event = receipt.logs.find(
+        log => log.eventName === 'TokensBatchMinted'
+      );
+
+      if (event) {
+        tokenIds = event.args[3].map(tokenId => tokenId.toString());
+      }
+
+      return {
+        transactionHash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        tokenIds: tokenIds,
+        recipient: recipient,
+        landId: landId,
+        quantity: quantity
+      };
+    } catch (error) {
+      this.logger.error(`Error minting multiple tokens for user: ${error.message}`);
+      throw new Error(`Failed to mint multiple tokens: ${error.message}`);
+    }
+  }
+  /**
+ * Récupère les informations sur les frais de plateforme
+ * @returns Le pourcentage de frais actuel et les paramètres de calcul
+ */
+  async getPlatformFeeInfo(): Promise<any> {
+    try {
+      const platformFeePercentage = await this.landToken.platformFeePercentage();
+      const percentageBase = await this.landToken.PERCENTAGE_BASE();
+
+      const feePercentage = (Number(platformFeePercentage) / Number(percentageBase)) * 100;
+
+      return {
+        platformFeePercentage: Number(platformFeePercentage),
+        percentageBase: Number(percentageBase),
+        formattedPercentage: `${feePercentage.toFixed(2)}%`,
+        feeExample: {
+          paymentAmount: "1.0 ETH",
+          platformFee: `${(feePercentage / 100).toFixed(4)} ETH`,
+          ownerReceives: `${(1 - feePercentage / 100).toFixed(4)} ETH`
+        }
+      };
+    } catch (error) {
+      this.logger.error('Error getting platform fee info:', error);
+      throw new Error(`Failed to get platform fee info: ${error.message}`);
     }
   }
 }

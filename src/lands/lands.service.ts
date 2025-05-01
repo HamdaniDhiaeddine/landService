@@ -38,6 +38,18 @@ export class LandService {
       }
 
       this.logger.log(`Starting land creation process at ${new Date().toISOString()} for user: nesssim`);
+      // Définir des valeurs par défaut ou ajuster pour la démo
+      const totalTokens = createLandDto.totalTokens || 100; // Valeur par défaut: 100 tokens
+
+      // Réduire le prix pour une démo
+      let pricePerToken = createLandDto.pricePerToken || '0.01'; // Prix par défaut: 0.01 ETH
+
+      // Si le prix est trop élevé pour une démo, le réduire
+      const maxDemoPrice = 0.01; // Prix maximum pour la démo en ETH
+      if (parseFloat(pricePerToken) > maxDemoPrice) {
+        this.logger.log(`Reducing price for demo from ${pricePerToken} ETH to ${maxDemoPrice} ETH`);
+        pricePerToken = maxDemoPrice.toString();
+      }
       this.logger.log('Creation parameters:', {
         title: createLandDto.title,
         location: createLandDto.location,
@@ -95,8 +107,6 @@ export class LandService {
       }
 
       // 5. Enregistrer sur la blockchain avec des valeurs par défaut non nulles
-      const totalTokens = createLandDto.totalTokens || 100;
-      const pricePerToken = createLandDto.pricePerToken || '1';
 
       const blockchainTx = await this.blockchainService.registerLand({
         title: createLandDto.title,
@@ -944,4 +954,259 @@ export class LandService {
       this.logger.error('Failed to update land tokenization status:', error);
     }
   }
+  /**
+   * Mint plusieurs tokens pour un terrain et met à jour MongoDB
+   * @param landId ID du terrain sur la blockchain
+   * @param quantity Nombre de tokens à minter
+   * @param value Montant en ETH à payer pour les tokens
+   * @param userAddress Adresse Ethereum de l'utilisateur (facultatif)
+   * @returns Les détails de la transaction et les tokens créés
+   */
+  async mintMultipleTokens(
+    landId: number,
+    quantity: number,
+    value: string,
+    userAddress?: string
+  ): Promise<any> {
+    try {
+      this.logger.log(`Starting mint multiple tokens process for land ID: ${landId}, quantity: ${quantity}, value: ${value}`);
+
+      // 1. Trouver le terrain dans MongoDB d'abord
+      const land = await this.landModel.findOne({ blockchainLandId: landId.toString() }).exec();
+
+      if (!land) {
+        throw new NotFoundException(`Land with blockchain ID ${landId} not found in database`);
+      }
+
+      this.logger.log(`Found land in database: ${land._id}`);
+
+      // 2. Appeler le BlockchainService pour minter les tokens
+      const result = await this.blockchainService.mintMultipleTokens(landId, quantity, value);
+
+      this.logger.log(`Minting successful with transaction hash: ${result.hash}`);
+
+      // 3. Récupérer les tokens créés
+      const tokenIds = result.tokenIds || [];
+
+      // 4. Mettre à jour MongoDB avec les informations des tokens
+      if (tokenIds.length > 0) {
+        // Obtenir le nombre actuel de tokens disponibles depuis la blockchain
+        const [, , availableTokens] = await this.blockchainService.getLandRegistry().getLandDetails(landId);
+
+        // Mettre à jour le document dans MongoDB
+        const updateResult = await this.landModel.findByIdAndUpdate(
+          land._id,
+          {
+            $set: {
+              availableTokens: Number(availableTokens)
+            },
+            $push: {
+              tokenIds: { $each: tokenIds.map(id => Number(id)) }
+            }
+          },
+          { new: true }
+        ).exec();
+
+        this.logger.log(`Updated MongoDB document with new tokens. Available tokens: ${updateResult.availableTokens}`);
+
+        // 5. Enrichir le résultat avec des informations supplémentaires
+        return {
+          ...result,
+          landMongoId: land._id.toString(),
+          landTitle: land.title,
+          availableTokens: Number(availableTokens),
+          totalTokens: land.totalTokens
+        };
+      } else {
+        this.logger.warn(`No token IDs returned from blockchain service`);
+        return result;
+      }
+    } catch (error) {
+      this.logger.error(`Error in mintMultipleTokens:`, error);
+
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+
+      throw new InternalServerErrorException(`Failed to mint multiple tokens: ${error.message}`);
+    }
+  }
+
+  /**
+ * Mint un token pour un terrain et met à jour MongoDB
+ * @param landId ID du terrain sur la blockchain
+ * @param value Montant en ETH à payer pour le token
+ * @param userAddress Adresse Ethereum de l'utilisateur (facultatif)
+ * @returns Les détails de la transaction et le token créé
+ */
+  async mintToken(
+    landId: number,
+    value: string,
+    userAddress?: string
+  ): Promise<any> {
+    try {
+      this.logger.log(`Starting mint token process for land ID: ${landId}, value: ${value}`);
+
+      // 1. Trouver le terrain dans MongoDB d'abord
+      const land = await this.landModel.findOne({ blockchainLandId: landId.toString() }).exec();
+
+      if (!land) {
+        throw new NotFoundException(`Land with blockchain ID ${landId} not found in database`);
+      }
+
+      this.logger.log(`Found land in database: ${land._id}`);
+
+      // 2. Appeler le BlockchainService pour minter le token
+      const result = await this.blockchainService.mintToken(landId, value);
+
+      this.logger.log(`Minting successful with transaction hash: ${result.hash}`);
+
+      // 3. Récupérer le token créé
+      const tokenId = result.tokenId;
+
+      // 4. Mettre à jour MongoDB avec les informations du token
+      if (tokenId) {
+        // Obtenir le nombre actuel de tokens disponibles depuis la blockchain
+        const [, , availableTokens] = await this.blockchainService.getLandRegistry().getLandDetails(landId);
+
+        // Mettre à jour le document dans MongoDB
+        const updateResult = await this.landModel.findByIdAndUpdate(
+          land._id,
+          {
+            $set: {
+              availableTokens: Number(availableTokens)
+            },
+            $push: {
+              tokenIds: Number(tokenId)
+            }
+          },
+          { new: true }
+        ).exec();
+
+        this.logger.log(`Updated MongoDB document with new token. Available tokens: ${updateResult.availableTokens}`);
+
+        // 5. Enrichir le résultat avec des informations supplémentaires
+        return {
+          ...result,
+          landMongoId: land._id.toString(),
+          landTitle: land.title,
+          availableTokens: Number(availableTokens),
+          totalTokens: land.totalTokens
+        };
+      } else {
+        this.logger.warn(`No token ID returned from blockchain service`);
+        return result;
+      }
+    } catch (error) {
+      this.logger.error(`Error in mintToken:`, error);
+
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+
+      throw new InternalServerErrorException(`Failed to mint token: ${error.message}`);
+    }
+  }
+  
+  /**
+   * Met à jour la base de données après un minting
+   * @param landId ID du terrain sur la blockchain
+   * @param tokenId ID du token créé
+   */
+  async updateAfterMint(landId: number, tokenId: string | number): Promise<void> {
+    try {
+      // Trouver le terrain dans MongoDB
+      const land = await this.landModel.findOne({ blockchainLandId: landId.toString() }).exec();
+
+      if (!land) {
+        this.logger.warn(`Land with blockchain ID ${landId} not found in database, skipping update`);
+        return;
+      }
+
+      // Récupérer le nombre de tokens disponibles depuis la blockchain
+      const [, , availableTokens] = await this.blockchainService.getLandRegistry().getLandDetails(landId);
+
+      // Mettre à jour le document
+      await this.landModel.findByIdAndUpdate(
+        land._id,
+        {
+          $set: { availableTokens: Number(availableTokens) },
+          $push: { tokenIds: Number(tokenId) }
+        }
+      ).exec();
+
+      this.logger.log(`Updated MongoDB after minting: landId=${landId}, tokenId=${tokenId}, availableTokens=${availableTokens}`);
+    } catch (error) {
+      this.logger.error(`Error updating after mint: ${error.message}`);
+      // Ne pas propager l'erreur, car c'est une opération secondaire
+    }
+  }
+
+  /**
+ * Récupère tous les tokens créés pour un terrain spécifique
+ * @param landId ID du terrain sur la blockchain
+ * @returns Informations sur les tokens du terrain
+ */
+  async getTokensForLand(landId: number): Promise<any> {
+    try {
+      // 1. Vérifier que le terrain existe dans la base de données
+      const land = await this.landModel.findOne({ blockchainLandId: landId.toString() }).exec();
+
+      if (!land) {
+        throw new NotFoundException(`Land with blockchain ID ${landId} not found in database`);
+      }
+
+      // 2. Récupérer les détails actuels depuis la blockchain
+      const [
+        isTokenized,
+        status,
+        availableTokens,
+        pricePerToken,
+        cid
+      ] = await this.blockchainService.getLandRegistry().getLandDetails(landId);
+
+      // 3. Mettre à jour les informations dans MongoDB si nécessaire
+      if (land.availableTokens !== Number(availableTokens)) {
+        await this.landModel.findByIdAndUpdate(
+          land._id,
+          { $set: { availableTokens: Number(availableTokens) } }
+        ).exec();
+      }
+
+      // 4. Récupérer les IDs des tokens depuis le document
+      const tokenIds = land.tokenIds || [];
+
+      // 5. Construire la réponse
+      return {
+        landId: landId,
+        blockchainLandId: land.blockchainLandId,
+        title: land.title,
+        location: land.location,
+        isTokenized: isTokenized,
+        status: this.getValidationStatusString(Number(status)),
+        totalTokens: land.totalTokens,
+        availableTokens: Number(availableTokens),
+        pricePerToken: ethers.formatEther(pricePerToken),
+        tokenIds: tokenIds,
+        ownerAddress: land.ownerAddress
+      };
+    } catch (error) {
+      this.logger.error(`Error getting tokens for land ${landId}:`, error);
+
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+
+      throw new InternalServerErrorException(`Failed to get tokens for land: ${error.message}`);
+    }
+  }
+  private getValidationStatusString(status: number): string {
+    const statusMap = {
+      0: 'EN_ATTENTE',
+      1: 'VALIDE',
+      2: 'REJETE'
+    };
+    return statusMap[status] || 'UNKNOWN';
+  }
+
 }

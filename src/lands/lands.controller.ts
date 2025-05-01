@@ -207,6 +207,41 @@ export class LandController {
   }
 
 
+  @Get('tokens/:landId')
+  async getTokensForLand(@Param('landId') landId: string) {
+    try {
+      const landIdNum = Number(landId);
+      if (isNaN(landIdNum) || landIdNum <= 0) {
+        throw new BadRequestException('Invalid land ID');
+      }
+
+      const result = await this.landService.getTokensForLand(landIdNum);
+
+      return {
+        success: true,
+        data: {
+          landId: result.landId,
+          title: result.title,
+          location: result.location,
+          isTokenized: result.isTokenized,
+          status: result.status,
+          totalTokens: result.totalTokens,
+          availableTokens: result.availableTokens,
+          pricePerToken: result.pricePerToken,
+          tokenIds: result.tokenIds
+        },
+        message: 'Land tokens retrieved successfully',
+      };
+    } catch (error) {
+      this.logger.error(`Error getting tokens for land: ${error.message}`);
+
+      return {
+        success: false,
+        error: error.message,
+        message: 'Failed to get tokens for land',
+      };
+    }
+  }
 
 
   @Get('without-role-validation')
@@ -357,118 +392,7 @@ export class LandController {
     }
   }
 
-  @Post('tokens/mint')
-  async mintToken(
-    @Body('landId') landId: number,
-    @Body('value') value: string,
-    @Req() req: Request
-  ) {
-    try {
-      // Vérifier les paramètres
-      if (!landId || landId <= 0) {
-        throw new BadRequestException('ID de terrain invalide');
-      }
 
-      if (!value) {
-        throw new BadRequestException('Valeur de paiement requise');
-      }
-
-      // Extraire l'adresse Ethereum de l'utilisateur si nécessaire
-      const user = (req as any).user as JWTPayload;
-
-      this.logger.log(`Mint token request received for land ID: ${landId}`, {
-        user: user.userId,
-        timestamp: new Date().toISOString(),
-        landId,
-        value
-      });
-
-      // Appeler le service
-      const result = await this.blockchainService.mintToken(landId, value);
-
-      // Construire une réponse enrichie
-      return {
-        success: true,
-        data: {
-          transactionHash: result.hash,
-          blockNumber: result.blockNumber,
-          tokenId: result.tokenId,
-          landId: landId,
-          timestamp: new Date().toISOString()
-        },
-        message: 'Token créé avec succès'
-      };
-    } catch (error) {
-      this.logger.error('Erreur lors de la création du token:', {
-        error: error.message,
-        stack: error.stack,
-        timestamp: new Date().toISOString()
-      });
-
-      if (error instanceof BadRequestException) {
-        throw error;
-      }
-
-      throw new HttpException(
-        error.message,
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-  }
-
-  @Post('tokens/mint-for-owner')
-  @UseGuards(JwtAuthGuard)
-  async mintTokenForOwner(
-    @Body('landId') landId: number,
-    @Req() req: Request
-  ) {
-    try {
-      const user = (req as any).user as JWTPayload;
-
-      // Récupérer les détails du terrain pour trouver le propriétaire et le prix
-      const landRegistry = this.blockchainService.getLandRegistry();
-      const landDetails = await landRegistry.lands(landId);
-      const ownerAddress = landDetails.owner;
-
-      // Récupérer le prix par token depuis getLandDetails
-      const [isTokenized, status, availableTokens, pricePerToken] =
-        await landRegistry.getLandDetails(landId);
-
-      this.logger.log(`Minting token for land ID ${landId} owner ${ownerAddress}`);
-
-      // Convertir le prix BigInt en string pour ethers.formatEther
-      const pricePerTokenString = pricePerToken.toString();
-      const priceInEth = ethers.formatEther(pricePerTokenString);
-
-      this.logger.log(`Price per token: ${priceInEth} ETH`);
-
-      // Utiliser la méthode de minting avec le prix récupéré
-      const result = await this.blockchainService.mintTokenForUser(
-        landId,
-        ownerAddress,
-        priceInEth  // Le prix en ETH formaté
-      );
-
-      return {
-        success: true,
-        data: {
-          transactionHash: result.transactionHash,
-          blockNumber: typeof result.blockNumber === 'bigint' ? result.blockNumber.toString() : result.blockNumber,
-          tokenId: typeof result.tokenId === 'bigint' ? result.tokenId.toString() : result.tokenId,
-          recipient: ownerAddress,
-          landId: landId.toString(),
-          pricePerToken: priceInEth
-        },
-        message: `Token successfully minted and sent to land owner at ${ownerAddress}`
-      };
-    } catch (error) {
-      this.logger.error(`Error in mint-for-owner: ${error.message}`);
-      throw new HttpException(
-        error.message,
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-  }
 
   @Post('tokens/transfer')
   async transferToken(
@@ -584,4 +508,193 @@ export class LandController {
     }
   }
 
+  //Minting
+  @Post('tokens/mint-multiple')
+  async mintMultipleTokens(
+    @Body('landId') landId: number,
+    @Body('quantity') quantity: number,
+    @Body('value') value: string,
+    @Req() req: Request
+  ) {
+    try {
+      // Vérifier les paramètres
+      if (!landId || landId <= 0) {
+        throw new BadRequestException('Invalid land ID');
+      }
+
+      if (!quantity || quantity <= 0) {
+        throw new BadRequestException('Quantity must be greater than zero');
+      }
+
+      if (!value) {
+        throw new BadRequestException('Payment value is required');
+      }
+
+      // Extraire l'utilisateur
+      const user = (req as any).user as JWTPayload;
+      this.logger.log(`Mint multiple tokens request: landId=${landId}, quantity=${quantity}, value=${value}, user=${user.userId}`);
+
+      // Appeler le service
+      const result = await this.landService.mintMultipleTokens(
+        landId,
+        quantity,
+        value,
+        user.ethAddress
+      );
+
+      // Retour simplifié pour le frontend
+      return {
+        success: true,
+        data: {
+          txHash: result.hash,
+          tokenIds: result.tokenIds,
+          landId: landId,
+          availableTokens: result.availableTokens,
+          totalTokens: result.totalTokens
+        },
+        message: `${quantity} tokens minted successfully`,
+        timestamp: '2025-05-01 19:24:02'
+      };
+    } catch (error) {
+      this.logger.error(`Error minting tokens: ${error.message}`);
+
+      return {
+        success: false,
+        error: error.message,
+        message: 'Failed to mint tokens',
+        timestamp: '2025-05-01 19:24:02'
+      };
+    }
+  }
+
+  @Post('tokens/mint')
+  async mintToken(
+    @Body('landId') landId: number,
+    @Body('value') value: string,
+    @Req() req: Request
+  ) {
+    try {
+      // Vérifier les paramètres
+      if (!landId || landId <= 0) {
+        throw new BadRequestException('Invalid land ID');
+      }
+
+      if (!value) {
+        throw new BadRequestException('Payment value is required');
+      }
+
+      // Extraire l'utilisateur
+      const user = (req as any).user as JWTPayload;
+      this.logger.log(`Mint token request: landId=${landId}, value=${value}, user=${user.userId}`);
+
+      // Appeler le service
+      const result = await this.landService.mintToken(
+        landId,
+        value,
+        user.ethAddress
+      );
+
+      // Retour simplifié pour le frontend
+      return {
+        success: true,
+        data: {
+          txHash: result.hash,
+          tokenId: result.tokenId,
+          landId: landId,
+          availableTokens: result.availableTokens,
+          totalTokens: result.totalTokens
+        },
+        message: 'Token minted successfully',
+      };
+    } catch (error) {
+      this.logger.error(`Error minting token: ${error.message}`);
+
+      return {
+        success: false,
+        error: error.message,
+        message: 'Failed to mint token',
+      };
+    }
+  }
+
+
+  @Post('tokens/mint-for-owner')
+  @UseGuards(JwtAuthGuard)
+  async mintTokenForOwner(
+    @Body('landId') landId: number,
+    @Req() req: Request
+  ) {
+    try {
+      const user = (req as any).user as JWTPayload;
+
+      if (!landId || landId <= 0) {
+        throw new BadRequestException('Invalid land ID');
+      }
+
+      // Récupérer les détails du terrain pour trouver le propriétaire et le prix
+      const landRegistry = this.blockchainService.getLandRegistry();
+      const landDetails = await landRegistry.lands(landId);
+      const ownerAddress = landDetails.owner;
+
+      // Récupérer le prix par token depuis getLandDetails
+      const [isTokenized, status, availableTokens, pricePerToken] =
+        await landRegistry.getLandDetails(landId);
+
+      if (!isTokenized) {
+        throw new BadRequestException('Land is not tokenized yet');
+      }
+
+      // Convertir le prix BigInt en string pour ethers.formatEther
+      const pricePerTokenString = pricePerToken.toString();
+      const priceInEth = ethers.formatEther(pricePerTokenString);
+
+      // Utiliser la méthode de minting avec le prix récupéré
+      const result = await this.blockchainService.mintTokenForUser(
+        landId,
+        ownerAddress,
+        priceInEth
+      );
+
+      // Mettre à jour MongoDB
+      await this.landService.updateAfterMint(landId, result.tokenId);
+
+      return {
+        success: true,
+        data: {
+          txHash: result.transactionHash,
+          tokenId: result.tokenId,
+          recipient: ownerAddress,
+          landId: landId,
+          value: priceInEth
+        },
+        message: 'Token minted and sent to land owner'
+      };
+    } catch (error) {
+      this.logger.error(`Error in mint-for-owner: ${error.message}`);
+
+      return {
+        success: false,
+        error: error.message,
+        message: 'Failed to mint token for owner'
+      };
+    }
+  }
+  @Get('platform-fees/info')
+  async getPlatformFeeInfo() {
+    try {
+      const feeInfo = await this.blockchainService.getPlatformFeeInfo();
+
+      return {
+        success: true,
+        data: feeInfo,
+        message: 'Platform fee information retrieved successfully'
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+        message: 'Failed to retrieve platform fee information'
+      };
+    }
+  }
 }
