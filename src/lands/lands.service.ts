@@ -38,6 +38,14 @@ export class LandService {
       }
 
       this.logger.log(`Starting land creation process at ${new Date().toISOString()} for user: nesssim`);
+      this.logger.log('Creation parameters:', {
+        title: createLandDto.title,
+        location: createLandDto.location,
+        surface: createLandDto.surface,
+        totalTokens: createLandDto.totalTokens || 100, // Utilise la valeur fournie ou 100 par défaut
+        pricePerToken: createLandDto.pricePerToken || '1', // Utilise la valeur fournie ou 1 par défaut
+        owner: ownerAddress
+      });
       this.logger.log(`Files to process: ${createLandDto.fileBuffers?.documents?.length || 0} documents, ${createLandDto.fileBuffers?.images?.length || 0} images`);
 
       // Ajouter des logs pour vérifier les buffers
@@ -87,12 +95,15 @@ export class LandService {
       }
 
       // 5. Enregistrer sur la blockchain avec des valeurs par défaut non nulles
+      const totalTokens = createLandDto.totalTokens || 100;
+      const pricePerToken = createLandDto.pricePerToken || '1';
+
       const blockchainTx = await this.blockchainService.registerLand({
         title: createLandDto.title,
         location: createLandDto.location,
         surface: Number(createLandDto.surface) || 1250,
-        totalTokens: 100,
-        pricePerToken: '1',
+        totalTokens: Number(totalTokens),
+        pricePerToken: pricePerToken,
         owner: ownerAddress,
         metadataCID: combinedCID
       });
@@ -106,13 +117,18 @@ export class LandService {
         amenities: amenitiesMap,
         ipfsCIDs: documentsCIDs,
         imageCIDs: imagesCIDs,
+        totalTokens: Number(totalTokens),
+        pricePerToken: pricePerToken,
       });
 
       const savedLand = await land.save();
       this.logger.log(`Land created with ID: ${savedLand._id}`, {
         landId: savedLand._id,
         blockchainTxHash: blockchainTx.hash,
-        ownerAddress
+        blockchainLandId: blockchainTx.landId,
+        ownerAddress,
+        totalTokens,
+        pricePerToken
       });
 
       return savedLand;
@@ -277,33 +293,33 @@ export class LandService {
   async validateLand(request: ValidationRequest, user: JWTPayload): Promise<ValidationResponse> {
     try {
       this.logger.log(`Starting validation process for land ID: ${request.landId} by user: ${user.userId}`);
-  
+
       const blockchainLandId = request.landId;
       if (!blockchainLandId) {
         throw new BadRequestException('Blockchain Land ID is required');
       }
-  
+
       // Vérifier que le rôle de l'utilisateur est un type de validateur valide
       if (!(user.role in ValidatorType)) {
         throw new BadRequestException(`Invalid validator role: ${user.role}`);
       }
-  
+
       const land = await this.landModel.findOne({ blockchainLandId: blockchainLandId });
       if (!land) {
         throw new BadRequestException(`Land with blockchain ID ${blockchainLandId} not found`);
       }
-  
+
       this.logger.log(`Land with blockchain ID ${blockchainLandId} found`);
-  
+
       // Récupération de l'adresse Ethereum de l'utilisateur depuis le JWT
       const validatorAddress = user.ethAddress;
       if (!validatorAddress) {
         throw new BadRequestException('Validator Ethereum address not found in JWT');
       }
-  
+
       // Timestamp pour la signature
       const timestamp = Math.floor(Date.now() / 1000);
-  
+
       // Message à signer (sans mentionner le relayer)
       const messageToSign = `Validation officielle de terrain
           ID du terrain: ${blockchainLandId}
@@ -311,25 +327,25 @@ export class LandService {
           Rôle: ${user.role}
           Horodatage: ${timestamp}
           Validation: ${request.isValid ? 'Approuvé' : 'Rejeté'}`;
-  
+
       // Utiliser la clé privée du relayer existante
       const relayerPrivateKey = process.env.PRIVATE_KEY;
       if (!relayerPrivateKey) {
         throw new InternalServerErrorException('System signature key not configured');
       }
-  
+
       // Créer le wallet pour la signature
       const signingWallet = new ethers.Wallet(relayerPrivateKey);
-  
+
       // Signer le message
       const signature = await signingWallet.signMessage(messageToSign);
-  
+
       this.logger.log('Official signature generated for validation', {
         validatorAddress,
         role: user.role,
         timestamp,
       });
-  
+
       // Créer les métadonnées de validation avec le rôle directement comme ValidatorType
       const validationMetadata: ValidationMetadata = {
         text: request.comment,
@@ -346,20 +362,20 @@ export class LandService {
         signatureStandard: 'ISO/IEC 14888-3',
         signedMessage: messageToSign
       };
-  
+
       this.logger.log('Creating validation metadata', {
         blockchainLandId,
         validator: user.ethAddress,
         validatorRole: user.role,
       });
-  
+
       // Upload des commentaires sur IPFS
       const cidComments = await this.ipfsService.uploadComment(
         JSON.stringify(validationMetadata)
       );
-  
+
       this.logger.log('Successfully uploaded comments to IPFS', { cidComments });
-  
+
       // Valider via le relayer
       const validationResult = await this.blockchainService.validateLandWithRelayer({
         landId: blockchainLandId,
@@ -367,10 +383,10 @@ export class LandService {
         cidComments,
         isValid: request.isValid
       });
-  
+
       // Récupérer le txHash de la transaction blockchain
       const txHash = validationResult.validationDetails.txHash;
-  
+
       // Création du document selon le schema Mongoose, en suivant ValidationDocument
       const validationDoc = {
         landId: land._id.toString(),
@@ -383,12 +399,12 @@ export class LandService {
         txHash: txHash,
         blockNumber: validationResult.validationDetails.blockNumber,
         signature: signature,
-        signatureType: 'ECDSA', 
+        signatureType: 'ECDSA',
         signedMessage: messageToSign
       };
-  
+
       const savedValidation = await this.validationModel.create(validationDoc);
-  
+
       // Enrichir ValidationEntry avec txHash et signature
       const validationEntry: ValidationEntry = {
         validator: user.ethAddress,
@@ -396,12 +412,12 @@ export class LandService {
         timestamp: validationMetadata.timestamp,
         isValidated: request.isValid,
         cidComments: cidComments,
-        txHash: txHash,            
-        signature: signature,        
-        signatureType: 'ECDSA',      
-        signedMessage: messageToSign 
+        txHash: txHash,
+        signature: signature,
+        signatureType: 'ECDSA',
+        signedMessage: messageToSign
       };
-  
+
       // Mettre à jour le document land avec la nouvelle validation enrichie
       const updateResult = await this.landModel.findOneAndUpdate(
         { blockchainLandId: blockchainLandId },
@@ -412,30 +428,51 @@ export class LandService {
         },
         { new: true }
       );
-  
+
       this.logger.log('Land document updated with validation', {
         landId: land._id,
         validationsCount: updateResult.validations ? updateResult.validations.length : 0,
         txHash: txHash // Log du txHash
       });
-  
+
       // Calculer la progression de la validation
       const validationProgress = await this.calculateValidationProgressFromLand(updateResult);
-  
+
       const newStatus = this.determineLandStatus(validationProgress);
       await this.landModel.findOneAndUpdate(
         { blockchainLandId: blockchainLandId },
         { $set: { status: newStatus } },
         { new: true }
       );
-  
+      // NOUVEAU CODE: Vérifier si toutes les validations sont complétées
+      if (validationProgress.completed === validationProgress.total &&
+        validationProgress.validations.every(v => v.validated)) {
+
+        this.logger.log(`All validations completed for land ID ${blockchainLandId}. Initiating tokenization process...`);
+
+        try {
+          // Vérifier si le terrain n'est pas déjà tokenisé
+          const [isTokenized] = await this.blockchainService.getLandRegistry().getLandDetails(blockchainLandId);
+
+          if (!isTokenized) {
+            // Lancer la tokenisation de manière asynchrone pour ne pas bloquer la réponse
+            this.tokenizeLandAfterValidation(blockchainLandId);
+          } else {
+            this.logger.log(`Land ID ${blockchainLandId} is already tokenized.`);
+          }
+        } catch (tokenizationError) {
+          // Ne pas faire échouer la validation si la tokenisation échoue
+          this.logger.error(`Failed to initiate tokenization for land ID ${blockchainLandId}:`, tokenizationError);
+        }
+      }
+
       // Construction de la réponse avec tous les attributs enrichis
       const response: ValidationResponse = {
         success: true,
         message: 'Validation processed successfully',
         data: {
           transaction: {
-            hash: txHash, 
+            hash: txHash,
             blockNumber: validationResult.validationDetails.blockNumber,
             timestamp: validationMetadata.timestamp
           },
@@ -452,7 +489,7 @@ export class LandService {
               timestamp: validationMetadata.timestamp,
               cidComments: cidComments,
               //txHash: txHash,              
-              signature: signature         
+              signature: signature
             },
             validationProgress
           },
@@ -464,14 +501,14 @@ export class LandService {
           }
         }
       };
-  
+
       this.logger.log('Validation completed successfully', {
         blockchainLandId: blockchainLandId,
         validator: user.ethAddress,
         role: user.role,
         txHash: txHash,
       });
-  
+
       return response;
     } catch (error) {
       this.logger.error('Validation failed', {
@@ -535,6 +572,73 @@ export class LandService {
     });
 
     return progress;
+  }
+
+  /**
+ * Tokenise un terrain après validation complète.
+ * @param blockchainLandId ID du terrain sur la blockchain
+ */
+  private async tokenizeLandAfterValidation(blockchainLandId: string): Promise<void> {
+    try {
+      this.logger.log(`Starting tokenization process for fully validated land ID: ${blockchainLandId}`);
+
+      // Appeler la méthode de tokenisation dans le BlockchainService
+      const result = await this.blockchainService.tokenizeLand(Number(blockchainLandId));
+
+      if (result.success) {
+        this.logger.log(`Land ID ${blockchainLandId} successfully tokenized!`, {
+          transactionHash: result.data.transactionHash,
+          blockNumber: result.data.blockNumber
+        });
+
+        // Mettre à jour le statut du terrain dans MongoDB
+        await this.landModel.findOneAndUpdate(
+          { blockchainLandId },
+          {
+            $set: {
+              isTokenized: true,
+              tokenizationTxHash: result.data.transactionHash,
+              tokenizationTimestamp: new Date()
+            }
+          },
+          { new: true }
+        );
+
+        // Vous pourriez ajouter ici du code pour envoyer des notifications
+      } else {
+        this.logger.error(`Failed to tokenize land ID ${blockchainLandId}`);
+      }
+    } catch (error) {
+      this.logger.error(`Error during tokenization of land ID ${blockchainLandId}:`, error);
+
+      // Optionnel: Enregistrer l'échec dans la base de données pour une tentative ultérieure
+      await this.landModel.findOneAndUpdate(
+        { blockchainLandId },
+        {
+          $set: { tokenizationError: error.message },
+          $push: {
+            tokenizationAttempts: {
+              timestamp: new Date(),
+              error: error.message
+            }
+          }
+        }
+      );
+    }
+  }
+  /**
+   * Met à jour les informations de tokenisation d'un terrain
+   */
+  async updateLandAfterTokenization(id: string, updateData: {
+    isTokenized: boolean;
+    tokenizationTxHash: string;
+    tokenizationTimestamp: Date;
+  }): Promise<Land> {
+    return this.landModel.findOneAndUpdate(
+      { _id: id },
+      { $set: updateData },
+      { new: true }
+    ).exec();
   }
   private getValidatorTypeEnum(role: string): ValidatorType {
     const roleMap = {
@@ -750,6 +854,94 @@ export class LandService {
     } catch (error) {
       this.logger.error(`[${new Date().toISOString()}] Error fetching lands: `, error.stack);
       throw new Error(`Failed to fetch lands: ${error.message}`);
+    }
+  }
+  async tokenizeLandById(landId: number) {
+    try {
+      this.logger.log(`Starting tokenization for land with blockchain ID: ${landId}`);
+
+      // Vérifier que le terrain existe dans MongoDB
+      const land = await this.landModel.findOne({ blockchainLandId: landId.toString() });
+      if (!land) {
+        throw new NotFoundException(`Land with blockchain ID ${landId} not found in database`);
+      }
+
+      // Configurer le tokenizer si nécessaire
+      await this.configureTokenizerIfNeeded();
+
+      // Appeler la méthode tokenizeLand du service blockchain
+      const result = await this.blockchainService.tokenizeLand(landId);
+
+      // Mettre à jour le terrain dans MongoDB en fonction du résultat
+      await this.updateLandTokenizationStatus(land._id.toString(), result);
+
+      return result;
+    } catch (error) {
+      this.logger.error(`Error tokenizing land ${landId}:`, error);
+      throw error;
+    }
+  }
+
+  private async configureTokenizerIfNeeded() {
+    try {
+      const tokenizer = await this.blockchainService.getLandRegistry().tokenizer();
+      const landTokenAddress = this.blockchainService.getLandToken().target;
+
+      // Convertir en chaîne de caractères avant d'utiliser toLowerCase
+      const tokenizerStr = tokenizer.toString();
+      const landTokenStr = landTokenAddress.toString();
+
+      if (tokenizerStr.toLowerCase() !== landTokenStr.toLowerCase()) {
+        this.logger.log(`Setting tokenizer to LandToken contract address: ${landTokenStr}`);
+        const setTx = await this.blockchainService.getLandRegistry().setTokenizer(landTokenAddress, {
+          gasLimit: BigInt(200000)
+        });
+        await setTx.wait();
+        this.logger.log(`Tokenizer configured successfully!`);
+      }
+    } catch (error) {
+      this.logger.error('Failed to configure tokenizer:', error);
+      throw new Error(`Failed to configure tokenizer: ${error.message}`);
+    }
+  }
+
+  private async updateLandTokenizationStatus(landId: string, result: any) {
+    try {
+      if (result.success) {
+        await this.landModel.findByIdAndUpdate(
+          landId,
+          {
+            $set: {
+              isTokenized: true,
+              tokenizationTxHash: result.data.transactionHash,
+              tokenizationTimestamp: new Date()
+            },
+            $push: {
+              tokenizationAttempts: {
+                timestamp: new Date(),
+                txHash: result.data.transactionHash
+              }
+            }
+          }
+        );
+      } else {
+        await this.landModel.findByIdAndUpdate(
+          landId,
+          {
+            $set: {
+              tokenizationError: result.message
+            },
+            $push: {
+              tokenizationAttempts: {
+                timestamp: new Date(),
+                error: result.message
+              }
+            }
+          }
+        );
+      }
+    } catch (error) {
+      this.logger.error('Failed to update land tokenization status:', error);
     }
   }
 }
