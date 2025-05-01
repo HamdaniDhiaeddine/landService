@@ -197,7 +197,6 @@ export class BlockchainService implements OnModuleInit {
     }
   }
 
-
   async getAllLands() {
     try {
       console.log('[getAllLands] Starting fetch at:', new Date().toISOString());
@@ -398,17 +397,156 @@ export class BlockchainService implements OnModuleInit {
   }
 
   // Méthodes Land Token
-  async mintToken(landId: number, value: string) {
+  // Dans BlockchainService
+  async mintToken(landId: number, value: string): Promise<any> {
     try {
+      this.logger.log(`Starting mint token process for land ID: ${landId} with value: ${value}`);
+
+      // 1. Vérifier si le terrain existe et est tokenisé
+      const [
+        isTokenized,
+        status,
+        availableTokens,
+        pricePerToken,
+        cid
+      ] = await this.landRegistry.getLandDetails(landId);
+
+      if (!isTokenized) {
+        throw new Error(`Land ID ${landId} is not tokenized yet. Please tokenize the land first.`);
+      }
+
+      if (status.toString() !== "1") {
+        throw new Error(`Land ID ${landId} is not validated. Current status: ${this.getValidationStatusString(Number(status))}`);
+      }
+
+      if (Number(availableTokens) <= 0) {
+        throw new Error(`No tokens available for land ID ${landId}`);
+      }
+
+      // 2. Convertir la valeur en wei si ce n'est pas déjà fait
+      let valueInWei = value;
+      if (!value.includes('e+') && !value.startsWith('0x')) {
+        // Si c'est un nombre en ETH, convertir en wei
+        valueInWei = ethers.parseEther(value).toString();
+        this.logger.log(`Converted value from ${value} ETH to ${valueInWei} wei`);
+      }
+
+      // 3. Vérifier que la valeur est suffisante
+      const priceInWei = pricePerToken; // Déjà en wei depuis le smart contract
+      if (BigInt(valueInWei) < BigInt(priceInWei)) {
+        throw new Error(`Insufficient payment. Required: ${ethers.formatEther(priceInWei)} ETH, Provided: ${ethers.formatEther(valueInWei)} ETH`);
+      }
+
+      // 4. Appeler le smart contract
+      this.logger.log(`Calling mintToken with landId: ${landId}, value: ${valueInWei} wei`);
       const tx = await this.landToken.mintToken(landId, {
-        value: value
+        value: valueInWei
       });
+
+      // 5. Attendre la confirmation
+      this.logger.log(`Transaction sent: ${tx.hash}`);
       const receipt = await tx.wait();
-      return receipt;
+
+      // 6. Journaliser le succès
+      this.logger.log(`Token minted successfully for land ID ${landId}`, {
+        transactionHash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        gasUsed: receipt.gasUsed.toString()
+      });
+
+      // 7. Rechercher l'événement TokenMinted
+      let tokenId = null;
+      const event = receipt.logs.find(
+        log => log.eventName === 'TokenMinted'
+      );
+
+      if (event) {
+        tokenId = event.args[1]; // Index 1 devrait être tokenId
+      }
+
+      return {
+        hash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        tokenId: tokenId ? tokenId.toString() : null,
+        landId
+      };
     } catch (error) {
-      console.error('Error minting token:', error);
-      throw new Error(`Erreur lors du mint du token: ${error.message}`);
+      this.logger.error(`Error minting token for land ID ${landId}:`, error);
+
+      // Améliorer le message d'erreur selon le type d'erreur
+      let errorMessage = `Erreur lors du mint du token: ${error.message}`;
+
+      if (error.message.includes('insufficient funds')) {
+        errorMessage = 'Fonds insuffisants pour couvrir le prix du token et les frais de gaz';
+      } else if (error.message.includes('LandNotTokenized')) {
+        errorMessage = 'Le terrain n\'est pas encore tokenisé';
+      } else if (error.message.includes('LandNotValidated')) {
+        errorMessage = 'Le terrain n\'est pas encore validé';
+      } else if (error.message.includes('NoTokensAvailable')) {
+        errorMessage = 'Aucun token disponible pour ce terrain';
+      } else if (error.message.includes('InsufficientPayment')) {
+        errorMessage = 'Paiement insuffisant pour acheter le token';
+      }
+
+      throw new Error(errorMessage);
     }
+  }
+  /**
+ * Mint un token pour un utilisateur spécifié
+ * @param landId ID du terrain
+ * @param recipient Adresse Ethereum qui recevra le token
+ * @param value Montant en ETH à payer pour le token
+ * @returns Détails de la transaction
+ */
+  async mintTokenForUser(landId: number, recipient: string, value: string) {
+    try {
+      this.logger.log(`Minting token for land ID ${landId} to recipient ${recipient} with value ${value}`);
+
+      // Vérifier que l'adresse du destinataire est valide
+      if (!ethers.isAddress(recipient)) {
+        throw new Error(`Invalid recipient address: ${recipient}`);
+      }
+
+      // CORRECTION: Convertir la valeur ETH en wei (BigInt compatible)
+      const valueInWei = ethers.parseEther(value);
+
+      // Appeler la fonction mintTokenForUser du contrat
+      const tx = await this.landToken.mintTokenForUser(landId, recipient, {
+        value: valueInWei,  // Utiliser la valeur convertie en wei
+        gasLimit: BigInt(300000)
+      });
+
+      const receipt = await tx.wait();
+
+      this.logger.log(`Token minted successfully for land ID ${landId} to ${recipient}`);
+      this.logger.log(`Transaction hash: ${receipt.hash}`);
+
+      // Extraire l'ID du token depuis l'événement
+      const tokenId = this.extractTokenIdFromReceipt(receipt);
+
+      return {
+        transactionHash: receipt.hash,
+        blockNumber: receipt.blockNumber,
+        tokenId: tokenId,
+        recipient: recipient,
+        landId: landId
+      };
+    } catch (error) {
+      this.logger.error(`Error minting token for user: ${error.message}`);
+      throw new Error(`Failed to mint token: ${error.message}`);
+    }
+  }
+
+  // Ajouter cette méthode pour extraire l'ID du token
+  private extractTokenIdFromReceipt(receipt) {
+    for (const log of receipt.logs) {
+      if (log.eventName === 'TokenMinted') {
+        return log.args[1]; // L'ID du token est le deuxième argument de l'événement
+      }
+    }
+
+    this.logger.warn('TokenMinted event not found in logs');
+    return null;
   }
 
   async transferToken(to: string, tokenId: number) {

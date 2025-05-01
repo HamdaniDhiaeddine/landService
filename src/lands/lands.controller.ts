@@ -360,19 +360,109 @@ export class LandController {
   @Post('tokens/mint')
   async mintToken(
     @Body('landId') landId: number,
-    @Body('value') value: string
+    @Body('value') value: string,
+    @Req() req: Request
   ) {
     try {
+      // Vérifier les paramètres
+      if (!landId || landId <= 0) {
+        throw new BadRequestException('ID de terrain invalide');
+      }
+
+      if (!value) {
+        throw new BadRequestException('Valeur de paiement requise');
+      }
+
+      // Extraire l'adresse Ethereum de l'utilisateur si nécessaire
+      const user = (req as any).user as JWTPayload;
+
+      this.logger.log(`Mint token request received for land ID: ${landId}`, {
+        user: user.userId,
+        timestamp: new Date().toISOString(),
+        landId,
+        value
+      });
+
+      // Appeler le service
       const result = await this.blockchainService.mintToken(landId, value);
+
+      // Construire une réponse enrichie
       return {
         success: true,
         data: {
           transactionHash: result.hash,
-          blockNumber: result.blockNumber
+          blockNumber: result.blockNumber,
+          tokenId: result.tokenId,
+          landId: landId,
+          timestamp: new Date().toISOString()
         },
-        message: 'Token minted successfully'
+        message: 'Token créé avec succès'
       };
     } catch (error) {
+      this.logger.error('Erreur lors de la création du token:', {
+        error: error.message,
+        stack: error.stack,
+        timestamp: new Date().toISOString()
+      });
+
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      throw new HttpException(
+        error.message,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Post('tokens/mint-for-owner')
+  @UseGuards(JwtAuthGuard)
+  async mintTokenForOwner(
+    @Body('landId') landId: number,
+    @Req() req: Request
+  ) {
+    try {
+      const user = (req as any).user as JWTPayload;
+
+      // Récupérer les détails du terrain pour trouver le propriétaire et le prix
+      const landRegistry = this.blockchainService.getLandRegistry();
+      const landDetails = await landRegistry.lands(landId);
+      const ownerAddress = landDetails.owner;
+
+      // Récupérer le prix par token depuis getLandDetails
+      const [isTokenized, status, availableTokens, pricePerToken] =
+        await landRegistry.getLandDetails(landId);
+
+      this.logger.log(`Minting token for land ID ${landId} owner ${ownerAddress}`);
+
+      // Convertir le prix BigInt en string pour ethers.formatEther
+      const pricePerTokenString = pricePerToken.toString();
+      const priceInEth = ethers.formatEther(pricePerTokenString);
+
+      this.logger.log(`Price per token: ${priceInEth} ETH`);
+
+      // Utiliser la méthode de minting avec le prix récupéré
+      const result = await this.blockchainService.mintTokenForUser(
+        landId,
+        ownerAddress,
+        priceInEth  // Le prix en ETH formaté
+      );
+
+      return {
+        success: true,
+        data: {
+          transactionHash: result.transactionHash,
+          blockNumber: typeof result.blockNumber === 'bigint' ? result.blockNumber.toString() : result.blockNumber,
+          tokenId: typeof result.tokenId === 'bigint' ? result.tokenId.toString() : result.tokenId,
+          recipient: ownerAddress,
+          landId: landId.toString(),
+          pricePerToken: priceInEth
+        },
+        message: `Token successfully minted and sent to land owner at ${ownerAddress}`
+      };
+    } catch (error) {
+      this.logger.error(`Error in mint-for-owner: ${error.message}`);
       throw new HttpException(
         error.message,
         HttpStatus.INTERNAL_SERVER_ERROR
@@ -481,7 +571,7 @@ export class LandController {
       if (isNaN(landId) || landId <= 0) {
         throw new BadRequestException('Invalid land ID. Must be a positive number.');
       }
-      
+
       return await this.landService.tokenizeLandById(landId);
     } catch (error) {
       if (error instanceof BadRequestException) {
@@ -493,5 +583,5 @@ export class LandController {
       );
     }
   }
-  
+
 }
