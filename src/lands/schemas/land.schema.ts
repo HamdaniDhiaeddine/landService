@@ -77,7 +77,6 @@ export class Land {
   })
   amenities: Map<string, boolean>;
 
-  // NOUVEAUX CHAMPS POUR LA TOKENISATION
 
   @Prop({ default: false })
   isTokenized: boolean;
