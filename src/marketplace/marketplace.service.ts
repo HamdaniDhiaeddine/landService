@@ -910,4 +910,268 @@ export class MarketplaceService {
             throw new InternalServerErrorException(`Échec de la récupération des tokens améliorés: ${error.message}`);
         }
     }
+    /**
+     * Récupère la date de mise en vente d'un token et le hash de transaction depuis les événements blockchain
+     * @param tokenId ID du token
+     * @returns Objet contenant la date de listing et le hash de transaction, ou null si non trouvés
+     */
+    private async getTokenListingDetails(tokenId: number): Promise<{ date: Date, txHash: string } | null> {
+        try {
+            this.logger.log(`Récupération des détails de listing pour le token ${tokenId}`);
+
+            const provider = this.blockchainService.getProvider();
+            const marketplace = this.blockchainService.getMarketplace();
+
+            // Créer une interface pour l'événement TokenListed
+            const eventInterface = new ethers.Interface([
+                "event TokenListed(uint256 indexed tokenId, uint256 price, address indexed seller)"
+            ]);
+
+            // Construire un filtre pour l'événement
+            const filter = {
+                address: marketplace.target,
+                topics: [
+                    // Hash de l'événement TokenListed
+                    ethers.id("TokenListed(uint256,uint256,address)"),
+                    // Encodage du tokenId pour le filtrage
+                    ethers.toBeHex(tokenId, 32)
+                ]
+            };
+
+            // Obtenir le bloc actuel
+            const currentBlock = await provider.getBlockNumber();
+            this.logger.log(`Bloc actuel: ${currentBlock}`);
+
+            // Chercher dans les 10000 derniers blocs (ajuster selon vos besoins)
+            const fromBlock = Math.max(0, currentBlock - 10000);
+            this.logger.log(`Recherche d'événements du bloc ${fromBlock} au bloc ${currentBlock}`);
+
+            // Récupérer les logs correspondants
+            const logs = await provider.getLogs({
+                ...filter,
+                fromBlock,
+                toBlock: currentBlock
+            });
+
+            this.logger.log(`Trouvé ${logs.length} événements de listing pour le token ${tokenId}`);
+
+            if (logs.length === 0) {
+                return null;
+            }
+
+            // Trouver l'événement le plus récent qui correspond à un listing actif
+            const sortedLogs = [...logs].sort((a, b) => b.blockNumber - a.blockNumber);
+            const latestLog = sortedLogs[0];
+
+            // Obtenir le bloc pour déterminer la date
+            const block = await provider.getBlock(latestLog.blockNumber);
+
+            if (!block || !block.timestamp) {
+                this.logger.warn(`Impossible de récupérer le timestamp du bloc ${latestLog.blockNumber}`);
+                return null;
+            }
+
+            // Récupérer le hash de transaction du log
+            const txHash = latestLog.transactionHash;
+            const listingDate = new Date(Number(block.timestamp) * 1000);
+
+            this.logger.log(`Date de listing du token ${tokenId}: ${listingDate.toISOString()}, txHash: ${txHash}`);
+
+            return {
+                date: listingDate,
+                txHash: txHash
+            };
+        } catch (error) {
+            this.logger.error(`Erreur lors de la récupération des détails de listing du token ${tokenId}: ${error.message}`);
+            return null;
+        }
+    }
+    /**
+  * Récupère tous les tokens mis en vente avec dates et hash de transactions depuis les événements blockchain
+  */
+    async getMarketplaceListings() {
+        try {
+            const currentDateTime = "2025-05-04 17:26:23";
+            this.logger.log(`[${currentDateTime}] nesssim - Récupération des listings du marketplace`);
+
+            // Récupérer les listings depuis la blockchain
+            const blockchainResponse = await this.blockchainService.getMarketplaceListings();
+            const blockchainListings = blockchainResponse.data || [];
+
+            this.logger.log(`[${currentDateTime}] nesssim - Trouvé ${blockchainListings.length} tokens en vente sur la blockchain`);
+
+            // Enrichir les listings avec les données des événements blockchain
+            const enhancedListings = await Promise.all(blockchainListings.map(async (listing) => {
+                try {
+                    // Récupérer la date de listing et le hash de transaction depuis les événements blockchain
+                    const listingDetails = await this.getTokenListingDetails(listing.tokenId);
+
+                    // Extraire les données nécessaires de la structure reçue
+                    let purchasePrice;
+
+                    // Si le prix d'achat est directement dans listing
+                    if (listing.purchasePrice) {
+                        purchasePrice = listing.purchasePrice;
+                    }
+                    // Si le prix est dans un objet tokenData
+                    else if (listing.tokenData && listing.tokenData.purchasePrice) {
+                        purchasePrice = listing.tokenData.purchasePrice;
+                    }
+                    // Valeur par défaut
+                    else {
+                        purchasePrice = "0";
+                    }
+
+                    const mintDate = listing.mintDate || (listing.tokenData ? listing.tokenData.mintDate : null) || new Date().toISOString();
+                    const price = listing.price || "0";
+
+                    // Récupérer les données de localisation
+                    const location = listing.land?.location || '';
+
+                    // Calculer les heures depuis la mise en vente
+                    const hoursListed = listingDetails?.date ?
+                        Math.floor((new Date().getTime() - listingDetails.date.getTime()) / (1000 * 60 * 60)) :
+                        0;
+
+                    // AJOUT: Calculer le score de potentiel d'investissement
+                    const investmentScore = calculateInvestmentPotential(
+                        parseFloat(price),
+                        parseFloat(purchasePrice),
+                        location,
+                        hoursListed
+                    );
+
+                    this.logger.debug(`[${currentDateTime}] nesssim - Token ${listing.tokenId}: Score d'investissement calculé = ${investmentScore}`);
+
+                    // Construire l'objet enrichi basé sur la structure existante
+                    return {
+                        // Conserver les données originales
+                        ...listing,
+
+                        // Ajouter les informations de date de listing et transaction
+                        listingDate: listingDetails?.date,
+                        listingDateFormatted: listingDetails?.date ? listingDetails.date.toLocaleDateString() : 'Non disponible',
+                        listingTimestamp: listingDetails?.date ? listingDetails.date.getTime() : 0,
+                        daysSinceListing: listingDetails?.date ? Math.floor((new Date().getTime() - listingDetails.date.getTime()) / (1000 * 60 * 60 * 24)) : null,
+                        listingTxHash: listingDetails?.txHash || null,
+                        etherscanUrl: listingDetails?.txHash ? `https://sepolia.etherscan.io/tx/${listingDetails.txHash}` : null,
+
+                        // Formats lisibles pour l'affichage
+                        formattedPrice: `${price} ETH`,
+                        formattedPurchasePrice: `${purchasePrice} ETH`,
+                        mintDateFormatted: new Date(mintDate).toLocaleDateString(),
+
+                        // Calculer la différence de prix
+                        priceChangePercentage: calculatePriceChange(purchasePrice, price),
+
+                        // Ajouter des indicateurs pour l'UI
+                        isRecentlyListed: listingDetails?.date ? Math.floor((new Date().getTime() - listingDetails.date.getTime()) / (1000 * 60 * 60 * 24)) < 7 : false,
+                        isHighlyProfitable: parseFloat(price) > parseFloat(purchasePrice) * 1.5,
+
+                        // AJOUT: Ajouter le score d'investissement
+                        investmentPotential: investmentScore,
+                        investmentRating: getInvestmentRating(investmentScore)
+                    };
+                } catch (error) {
+                    this.logger.error(`[${currentDateTime}] nesssim - Erreur lors de l'enrichissement du listing ${listing.tokenId}: ${error.message}`);
+                    return listing; // Retourner le listing original en cas d'erreur
+                }
+            }));
+
+            // Trier par date de listing si disponible
+            try {
+                enhancedListings.sort((a, b) => {
+                    if (!a.listingTimestamp && !b.listingTimestamp) return 0;
+                    if (!a.listingTimestamp) return 1;
+                    if (!b.listingTimestamp) return -1;
+                    return b.listingTimestamp - a.listingTimestamp;
+                });
+            } catch (sortError) {
+                this.logger.warn(`[${currentDateTime}] nesssim - Erreur lors du tri: ${sortError.message}`);
+            }
+
+            return {
+                success: true,
+                data: enhancedListings,
+                count: enhancedListings.length,
+                message: `Récupéré ${enhancedListings.length} tokens en vente sur le marketplace`,
+                timestamp: currentDateTime
+            };
+        } catch (error) {
+            const currentDateTime = "2025-05-04 17:26:23";
+            this.logger.error(`[${currentDateTime}] nesssim - Erreur lors de la récupération des listings: ${error.message}`);
+            throw new InternalServerErrorException(`Échec de la récupération des listings: ${error.message}`);
+        }
+    }
+}
+/**
+ * Calcule le pourcentage de changement entre le prix d'achat et le prix de vente
+ * @param purchasePrice Prix d'achat (string en ETH)
+ * @param currentPrice Prix actuel (string en ETH)
+ * @returns Objet contenant le pourcentage et une version formatée
+ */
+function calculatePriceChange(purchasePrice: string, currentPrice: string) {
+    const purchase = parseFloat(purchasePrice);
+    const current = parseFloat(currentPrice);
+
+    if (purchase === 0) return { percentage: 0, formatted: '0%', isPositive: false };
+
+    const change = ((current - purchase) / purchase) * 100;
+
+    return {
+        percentage: change,
+        formatted: `${change.toFixed(2)}%`,
+        isPositive: change >= 0
+    };
+}
+
+/**
+ * Calcule un score simple de potentiel d'investissement
+ * @param price Prix actuel
+ * @param purchasePrice Prix d'achat
+ * @param location Emplacement (pour bonus potentiel)
+ * @param hoursListed Heures depuis la mise en vente
+ * @returns Score de 1 à 10
+ */
+function calculateInvestmentPotential(
+    price: number,
+    purchasePrice: number,
+    location: string,
+    hoursListed: number
+): number {
+    // Facteur basé sur la différence de prix
+    let score = 5; // Score de base
+
+    // Plus le prix est proche du prix d'achat, meilleur est l'investissement
+    if (purchasePrice > 0) {
+        const priceRatio = price / purchasePrice;
+        if (priceRatio < 1.1) score += 2; // Très bon prix
+        else if (priceRatio < 1.3) score += 1; // Prix raisonnable
+        else if (priceRatio > 2) score -= 2; // Prix trop élevé
+    }
+
+    // Bonus pour certains emplacements premium
+    const premiumLocations = ['casablanca', 'rabat', 'marrakech', 'tanger'];
+    if (location && premiumLocations.some(loc => location.toLowerCase().includes(loc))) {
+        score += 1;
+    }
+
+    // Bonus pour les listings récents (moins de 48 heures)
+    if (hoursListed < 48) score += 1;
+
+    // S'assurer que le score reste entre 1 et 10
+    return Math.max(1, Math.min(10, score));
+}
+
+/**
+ * Convertit un score numérique en notation textuelle pour l'affichage
+ * @param score Score numérique (1-10)
+ * @returns Évaluation textuelle
+ */
+function getInvestmentRating(score: number): string {
+    if (score >= 8) return 'Excellent';
+    if (score >= 6) return 'Bon';
+    if (score >= 4) return 'Moyen';
+    if (score >= 2) return 'Faible';
+    return 'Très faible';
 }

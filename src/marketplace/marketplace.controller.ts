@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards, Req, BadRequestException, InternalServerErrorException, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, UseGuards, Req, BadRequestException, InternalServerErrorException, Logger, Query } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { MarketplaceService } from './marketplace.service';
 import { JWTPayload } from 'src/auth/interfaces/jwt-payload.interface';
@@ -152,16 +152,7 @@ export class MarketplaceController {
         }
     }
 
-    @Get('listings')
-    async getMarketListings() {
-        try {
-            this.logger.log(`[${this.getCurrentDateTime()}] ${this.currentUser} - Demande de récupération des annonces du marketplace`);
-            return this.marketplaceService.getMarketListings();
-        } catch (error) {
-            this.logger.error(`[${this.getCurrentDateTime()}] ${this.currentUser} - Erreur lors de la récupération des annonces: ${error.message}`);
-            throw error;
-        }
-    }
+
 
     /**
      * Obtient la date et l'heure actuelles au format YYYY-MM-DD HH:MM:SS
@@ -234,6 +225,90 @@ export class MarketplaceController {
             return this.marketplaceService.getEnhancedUserTokens(user.ethAddress);
         } catch (error) {
             this.logger.error(`Erreur lors de la récupération des tokens améliorés pour ${user.ethAddress}: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
+      * Récupère tous les tokens disponibles à la vente sur le marketplace
+      * @returns Liste des tokens en vente avec leurs détails
+      */
+    @Get('listings')
+    async getMarketplaceListings() {
+        try {
+            this.logger.log(`Récupération des listings du marketplace`);
+            return this.marketplaceService.getMarketplaceListings();
+        } catch (error) {
+            this.logger.error(`Erreur lors de la récupération des listings: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
+     * Récupère les listings filtrés selon différents critères
+     */
+    @Get('listings/filtered')
+    async getFilteredListings(
+        @Query('minPrice') minPrice?: string,
+        @Query('maxPrice') maxPrice?: string,
+        @Query('landType') landType?: string,
+        @Query('sortBy') sortBy?: string,
+        @Query('sortOrder') sortOrder?: string
+    ) {
+        try {
+            this.logger.log(`Récupération des listings filtrés`);
+
+            // Utiliser le service existant - l'implémentation du filtrage peut être ajoutée ultérieurement
+            const result = await this.marketplaceService.getMarketplaceListings();
+
+            // Filtrage des résultats
+            let filteredListings = [...result.data];
+
+            // Filtrer par prix minimum
+            if (minPrice) {
+                const min = parseFloat(minPrice);
+                filteredListings = filteredListings.filter(item => parseFloat(item.price) >= min);
+            }
+
+            // Filtrer par prix maximum
+            if (maxPrice) {
+                const max = parseFloat(maxPrice);
+                filteredListings = filteredListings.filter(item => parseFloat(item.price) <= max);
+            }
+
+            // Filtrer par type de terrain
+            if (landType) {
+                filteredListings = filteredListings.filter(item =>
+                    item.landDetails?.landType?.toLowerCase() === landType.toLowerCase()
+                );
+            }
+
+            // Tri des résultats
+            if (sortBy) {
+                const order = sortOrder?.toLowerCase() === 'desc' ? -1 : 1;
+
+                filteredListings.sort((a, b) => {
+                    switch (sortBy.toLowerCase()) {
+                        case 'price':
+                            return (parseFloat(a.price) - parseFloat(b.price)) * order;
+                        case 'date':
+                            return ((a.listingTimestamp || 0) - (b.listingTimestamp || 0)) * order;
+                        case 'profit':
+                            return (a.priceChangePercentage.percentage - b.priceChangePercentage.percentage) * order;
+                        default:
+                            return 0;
+                    }
+                });
+            }
+
+            return {
+                success: true,
+                data: filteredListings,
+                count: filteredListings.length,
+                message: `Récupéré ${filteredListings.length} tokens filtrés sur le marketplace`,
+            };
+        } catch (error) {
+            this.logger.error(`Erreur lors de la récupération des listings filtrés: ${error.message}`);
             throw error;
         }
     }
