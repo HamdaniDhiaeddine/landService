@@ -1233,4 +1233,351 @@ export class BlockchainService implements OnModuleInit {
       throw new Error(`Failed to get platform fee info: ${error.message}`);
     }
   }
+
+  //Marketplace
+  /**
+ * Récupère tous les tokens possédés par une adresse spécifique
+ * @param ownerAddress Adresse ETH du propriétaire
+ * @returns Liste des tokens avec leurs détails
+ */
+  async getUserTokens(ownerAddress: string) {
+    try {
+      if (!ethers.isAddress(ownerAddress)) {
+        throw new Error('Adresse Ethereum invalide');
+      }
+
+      this.logger.log(`[${this.formatDate()}] Recherche des tokens pour l'adresse: ${ownerAddress}`);
+
+      const userTokens = [];
+      const MAX_TOKEN_ID_TO_CHECK = 1000; // Limite arbitraire, à ajuster selon votre cas d'utilisation
+
+      this.logger.log(`[${this.formatDate()}] Analyse des tokens de 1 à ${MAX_TOKEN_ID_TO_CHECK}`);
+
+      // Parcourir tous les IDs de tokens possibles 
+      for (let tokenId = 1; tokenId <= MAX_TOKEN_ID_TO_CHECK; tokenId++) {
+        try {
+          // Vérifier si le token existe via la méthode exists()
+          const exists = await this.landToken.exists(tokenId);
+          if (!exists) continue;
+
+          // Vérifier le propriétaire
+          const owner = await this.landToken.ownerOf(tokenId);
+
+          if (owner.toLowerCase() === ownerAddress.toLowerCase()) {
+            // Récupérer les données du token
+            const tokenData = await this.landToken.tokenData(tokenId);
+
+            // Récupérer les détails du terrain associé
+            const landId = Number(tokenData.landId);
+
+            // Vérifier si le token est listé sur le marketplace
+            const listing = await this.marketplace.listings(tokenId);
+
+            userTokens.push({
+              tokenId: tokenId,
+              landId: landId,
+              tokenNumber: Number(tokenData.tokenNumber),
+              purchasePrice: ethers.formatEther(tokenData.purchasePrice),
+              mintDate: new Date(Number(tokenData.mintDate) * 1000).toISOString(),
+              isListed: listing.isActive,
+              listingPrice: listing.isActive ? ethers.formatEther(listing.price) : null,
+              seller: listing.isActive ? listing.seller : null
+            });
+          }
+        } catch (error) {
+          // Ignorer les erreurs pour les tokens individuels
+          continue;
+        }
+      }
+
+      this.logger.log(`[${this.formatDate()}] Trouvé ${userTokens.length} tokens pour l'adresse ${ownerAddress}`);
+
+      // Pour chaque token, compléter avec les infos du terrain
+      for (const token of userTokens) {
+        try {
+          const landDetails = await this.landRegistry.getAllLandDetails(token.landId);
+          token.land = {
+            location: landDetails[0],
+            surface: Number(landDetails[1]),
+            owner: landDetails[2],
+            isRegistered: landDetails[3],
+            status: this.getValidationStatusString(Number(landDetails[5])),
+            totalTokens: Number(landDetails[6]),
+            availableTokens: Number(landDetails[7]),
+            pricePerToken: ethers.formatEther(landDetails[8])
+          };
+        } catch (error) {
+          this.logger.warn(`[${this.formatDate()}] Erreur lors de la récupération des détails du terrain ${token.landId}: ${error.message}`);
+          token.land = null;
+        }
+      }
+
+      return {
+        success: true,
+        data: userTokens,
+        count: userTokens.length,
+        message: `Récupéré ${userTokens.length} tokens pour l'adresse ${ownerAddress}`,
+        timestamp: this.formatDate()
+      };
+    } catch (error) {
+      this.logger.error(`Erreur lors de la récupération des tokens utilisateur: ${error.message}`);
+      throw new Error(`Échec de la récupération des tokens: ${error.message}`);
+    }
+  }
+
+  /**
+   * Récupère tous les tokens listés sur le marketplace
+   * @returns Liste des tokens en vente
+   */
+  async getMarketplaceListings() {
+    try {
+      this.logger.log(`[${this.formatDate()}] Récupération des listings du marketplace`);
+
+      const listings = [];
+      const MAX_TOKEN_ID_TO_CHECK = 1000; // Limite arbitraire, à ajuster
+
+      // Parcourir tous les tokens possibles
+      for (let tokenId = 1; tokenId <= MAX_TOKEN_ID_TO_CHECK; tokenId++) {
+        try {
+          // Vérifier si le token existe
+          const exists = await this.landToken.exists(tokenId);
+          if (!exists) continue;
+
+          // Vérifier si le token est listé
+          const listing = await this.marketplace.listings(tokenId);
+
+          if (listing.isActive) {
+            // Récupérer les données du token
+            const tokenData = await this.landToken.tokenData(tokenId);
+            const landId = Number(tokenData.landId);
+
+            // Récupérer les détails du terrain
+            let landDetails;
+            try {
+              landDetails = await this.landRegistry.getAllLandDetails(landId);
+            } catch (error) {
+              this.logger.warn(`[${this.formatDate()}] Erreur lors de la récupération des détails du terrain ${landId}: ${error.message}`);
+            }
+
+            listings.push({
+              tokenId: tokenId,
+              landId: landId,
+              price: ethers.formatEther(listing.price),
+              seller: listing.seller,
+              tokenNumber: Number(tokenData.tokenNumber),
+              purchasePrice: ethers.formatEther(tokenData.purchasePrice),
+              mintDate: new Date(Number(tokenData.mintDate) * 1000).toISOString(),
+              land: landDetails ? {
+                location: landDetails[0],
+                surface: Number(landDetails[1]),
+                owner: landDetails[2],
+                isRegistered: landDetails[3],
+                status: this.getValidationStatusString(Number(landDetails[5])),
+                totalTokens: Number(landDetails[6]),
+                availableTokens: Number(landDetails[7]),
+                pricePerToken: ethers.formatEther(landDetails[8])
+              } : null
+            });
+          }
+        } catch (error) {
+          // Ignorer les erreurs pour les tokens individuels
+          continue;
+        }
+      }
+
+      this.logger.log(`[${this.formatDate()}] Trouvé ${listings.length} tokens listés sur le marketplace`);
+
+      return {
+        success: true,
+        data: listings,
+        count: listings.length,
+        message: `Récupéré ${listings.length} listings actifs du marketplace`,
+        timestamp: this.formatDate()
+      };
+    } catch (error) {
+      this.logger.error(`Erreur lors de la récupération des listings: ${error.message}`);
+      throw new Error(`Échec de la récupération des listings: ${error.message}`);
+    }
+  }
+
+  /**
+   * Liste un token à vendre sur le marketplace
+   * @param tokenId ID du token à vendre
+   * @param price Prix en ETH (sous forme de chaîne)
+   * @returns Détails de la transaction
+   */
+  async listTokenForSale(tokenId: number, price: string) {
+    try {
+      this.logger.log(`[${this.formatDate()}] Mise en vente du token ${tokenId} au prix de ${price} ETH`);
+
+      // Vérifier si le token existe
+      const exists = await this.landToken.exists(tokenId);
+      if (!exists) {
+        throw new Error(`Le token ${tokenId} n'existe pas`);
+      }
+
+      // Vérifier si l'utilisateur est propriétaire du token
+      const owner = await this.landToken.ownerOf(tokenId);
+      const signerAddress = await this.signer.getAddress();
+
+      if (owner.toLowerCase() !== signerAddress.toLowerCase()) {
+        throw new Error(`L'utilisateur n'est pas le propriétaire du token ${tokenId}`);
+      }
+
+      // Vérifier si le token est déjà listé
+      const listing = await this.marketplace.listings(tokenId);
+      if (listing.isActive) {
+        throw new Error(`Le token ${tokenId} est déjà en vente`);
+      }
+
+      // Convertir le prix en wei
+      const priceInWei = ethers.parseEther(price);
+
+      // Approuver le marketplace pour gérer le token si ce n'est pas déjà fait
+      const isApproved = await this.landToken.isApprovedForAll(signerAddress, this.marketplace.target);
+      if (!isApproved) {
+        this.logger.log(`[${this.formatDate()}] Approbation du marketplace pour gérer les tokens`);
+        const approveTx = await this.landToken.setApprovalForAll(this.marketplace.target, true);
+        await approveTx.wait();
+        this.logger.log(`[${this.formatDate()}] Marketplace approuvé pour les transferts de tokens`);
+      }
+
+      // Mettre le token en vente
+      const tx = await this.marketplace.listToken(tokenId, priceInWei);
+      const receipt = await tx.wait();
+
+      // Récupérer les détails du token
+      const tokenData = await this.landToken.tokenData(tokenId);
+      const landId = Number(tokenData.landId);
+
+      return {
+        success: true,
+        data: {
+          transactionHash: receipt.hash,
+          blockNumber: receipt.blockNumber,
+          tokenId: tokenId,
+          landId: landId,
+          price: price,
+          seller: signerAddress,
+          timestamp: this.formatDate()
+        },
+        message: `Token ${tokenId} mis en vente avec succès au prix de ${price} ETH`
+      };
+    } catch (error) {
+      this.logger.error(`Erreur lors de la mise en vente du token: ${error.message}`);
+      throw new Error(`Échec de la mise en vente: ${error.message}`);
+    }
+  }
+
+  /**
+   * Annule la mise en vente d'un token
+   * @param tokenId ID du token
+   * @returns Détails de la transaction
+   */
+  async cancelListing(tokenId: number) {
+    try {
+      this.logger.log(`[${this.formatDate()}] Annulation de la mise en vente du token ${tokenId}`);
+
+      // Vérifier si le token est bien listé
+      const listing = await this.marketplace.listings(tokenId);
+
+      if (!listing.isActive) {
+        throw new Error(`Le token ${tokenId} n'est pas en vente`);
+      }
+
+      // Vérifier que l'utilisateur est bien le vendeur
+      const seller = listing.seller;
+      const signerAddress = await this.signer.getAddress();
+
+      if (seller.toLowerCase() !== signerAddress.toLowerCase()) {
+        throw new Error('Seul le vendeur peut annuler la mise en vente');
+      }
+
+      // Annuler la mise en vente
+      const tx = await this.marketplace.cancelListing(tokenId);
+      const receipt = await tx.wait();
+
+      return {
+        success: true,
+        data: {
+          transactionHash: receipt.hash,
+          blockNumber: receipt.blockNumber,
+          tokenId: tokenId,
+          seller: signerAddress,
+          timestamp: this.formatDate()
+        },
+        message: `Mise en vente du token ${tokenId} annulée avec succès`
+      };
+    } catch (error) {
+      this.logger.error(`Erreur lors de l'annulation de la mise en vente: ${error.message}`);
+      throw new Error(`Échec de l'annulation: ${error.message}`);
+    }
+  }
+
+  /**
+   * Permet à un relayer d'acheter un token pour un utilisateur
+   * @param tokenId ID du token à acheter
+   * @param buyer Adresse de l'acheteur
+   * @param value Montant en ETH à payer
+   * @returns Détails de la transaction
+   */
+  async buyTokenForUser(tokenId: number, buyer: string, value: string) {
+    try {
+      if (!ethers.isAddress(buyer)) {
+        throw new Error('Adresse de l\'acheteur invalide');
+      }
+
+      this.logger.log(`[${this.formatDate()}] Achat du token ${tokenId} pour l'utilisateur ${buyer} avec ${value} ETH`);
+
+      // Vérifier que le token est bien listé
+      const listing = await this.marketplace.listings(tokenId);
+
+      if (!listing.isActive) {
+        throw new Error(`Le token ${tokenId} n'est pas en vente`);
+      }
+
+      // Convertir le prix en wei
+      const valueInWei = ethers.parseEther(value);
+      const listingPrice = listing.price;
+
+      // Vérifier que le montant est suffisant
+      if (valueInWei < listingPrice) {
+        const requiredEth = ethers.formatEther(listingPrice);
+        throw new Error(`Paiement insuffisant. Requis: ${requiredEth} ETH, Fourni: ${value} ETH`);
+      }
+
+      // Acheter le token pour l'utilisateur
+      const tx = await this.marketplace.buyTokenForUser(tokenId, buyer, { value: valueInWei });
+      const receipt = await tx.wait();
+
+      // Récupérer les données du token acheté
+      const tokenData = await this.landToken.tokenData(tokenId);
+      const landId = Number(tokenData.landId);
+
+      return {
+        success: true,
+        data: {
+          transactionHash: receipt.hash,
+          blockNumber: receipt.blockNumber,
+          tokenId: tokenId,
+          landId: landId,
+          price: ethers.formatEther(listingPrice),
+          buyer: buyer,
+          seller: listing.seller,
+          timestamp: this.formatDate()
+        },
+        message: `Token ${tokenId} acheté avec succès pour ${ethers.formatEther(listingPrice)} ETH pour l'utilisateur ${buyer}`
+      };
+    } catch (error) {
+      this.logger.error(`Erreur lors de l'achat du token pour l'utilisateur: ${error.message}`);
+      throw new Error(`Échec de l'achat pour l'utilisateur: ${error.message}`);
+    }
+  }
+
+  // Méthode utilitaire pour formater la date
+  private formatDate(): string {
+    return new Date().toISOString().replace('T', ' ').substring(0, 19);
+  }
+
+
 }

@@ -9,21 +9,24 @@ import { BlockchainModule } from './blockchain/blockchain.module';
 
 import { LandModule } from './lands/lands.module';
 import { DocusignModule } from './docusign/docusign.module';
+import { MarketplaceModule } from './marketplace/marketplace.module';
 
 
 @Module({
   imports: [
     ConfigModule.forRoot({
-      isGlobal: true, // Rend ConfigModule disponible globalement
+      isGlobal: true, 
       envFilePath: '.env'
     }),
-    MongooseModule.forRoot(process.env.MONGO_URI),
+    MongooseModule.forRoot(process.env.MONGO_URL),
     LandModule,
     AuthModule,
     LocationModule,
     EncryptionModule,
-    IpfsModule, // ✅ Register IpfsModule here
-    BlockchainModule, DocusignModule, // Ajouter cette ligne
+    IpfsModule,
+    BlockchainModule, 
+    DocusignModule, 
+    MarketplaceModule,
   ],
 })
 export class AppModule {}

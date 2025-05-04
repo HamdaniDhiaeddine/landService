@@ -553,7 +553,6 @@ export class LandController {
           totalTokens: result.totalTokens
         },
         message: `${quantity} tokens minted successfully`,
-        timestamp: '2025-05-01 19:24:02'
       };
     } catch (error) {
       this.logger.error(`Error minting tokens: ${error.message}`);
@@ -562,7 +561,7 @@ export class LandController {
         success: false,
         error: error.message,
         message: 'Failed to mint tokens',
-        timestamp: '2025-05-01 19:24:02'
+
       };
     }
   }
