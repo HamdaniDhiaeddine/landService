@@ -1331,7 +1331,7 @@ export class BlockchainService implements OnModuleInit {
    */
   async getMarketplaceListings() {
     try {
-      this.logger.log(`[${this.formatDate()}] Récupération des listings du marketplace`);
+      this.logger.log(` Récupération des listings du marketplace`);
 
       const listings = [];
       const MAX_TOKEN_ID_TO_CHECK = 1000; // Limite arbitraire, à ajuster
