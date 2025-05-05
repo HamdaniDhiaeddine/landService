@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, Param, UseGuards, Req, BadRequestException
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { MarketplaceService } from './marketplace.service';
 import { JWTPayload } from 'src/auth/interfaces/jwt-payload.interface';
+import { ethers } from 'ethers';
 
 @Controller('marketplace')
 @UseGuards(JwtAuthGuard)
@@ -202,12 +203,33 @@ export class MarketplaceController {
             const user = (req as any).user as JWTPayload;
             const currentDateTime = "2025-05-04 00:38:21"; // Utilisation des valeurs fournies
             this.logger.log(`[${currentDateTime}] nesssim - Demande de récupération des tokens améliorés personnels`);
-
-            if (!user.ethAddress) {
-                throw new BadRequestException('Adresse Ethereum non trouvée dans le profil utilisateur');
+    
+            // Get owner address - handle cases with and without ethAddress
+            let ownerAddress: string;
+            
+            if (user.ethAddress) {
+                try {
+                    // If it looks like an Ethereum address
+                    if (user.ethAddress.startsWith('0x') && user.ethAddress.length === 42) {
+                        ownerAddress = user.ethAddress;
+                    } else {
+                        // Try to derive address from private key
+                        const wallet = new ethers.Wallet(user.ethAddress);
+                        ownerAddress = await wallet.getAddress();
+                        this.logger.log(`Derived address from private key: ${ownerAddress}`);
+                    }
+                } catch (error) {
+                    // If derivation fails, use blockchain service wallet
+                    ownerAddress = await this.marketplaceService.getBlockchainWalletAddress();
+                    this.logger.log(`Using blockchain service wallet address (fallback): ${ownerAddress}`);
+                }
+            } else {
+                // No Ethereum address in user profile, use blockchain service wallet
+                ownerAddress = await this.marketplaceService.getBlockchainWalletAddress();
+                this.logger.log(`Using blockchain service wallet address (default): ${ownerAddress}`);
             }
-
-            return this.marketplaceService.getEnhancedUserTokens(user.ethAddress);
+    
+            return this.marketplaceService.getEnhancedUserTokens(ownerAddress);
         } catch (error) {
             const currentDateTime = "2025-05-04 00:38:21"; // Utilisation des valeurs fournies
             this.logger.error(`[${currentDateTime}] nesssim - Erreur lors de la récupération des tokens améliorés: ${error.message}`);

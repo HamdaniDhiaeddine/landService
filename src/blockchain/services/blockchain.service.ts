@@ -217,6 +217,10 @@ export class BlockchainService implements OnModuleInit {
 
   }
 
+  async getWalletAddress(): Promise<string> {
+    return await this.signer.getAddress();
+  }
+
   async getAllLands() {
     try {
       console.log('[getAllLands] Starting fetch at:', new Date().toISOString());

@@ -17,7 +17,6 @@ import { Validation } from './schemas/validation.schema';
 import { ValidateLandDto } from './dto/validate-land.dto';
 import { EnhancedLandResult, IpfsFileInfo } from './interfaces/enhanced-land.interface';
 
-
 @Injectable()
 export class LandService {
   private readonly logger = new Logger(LandService.name);
@@ -30,14 +29,41 @@ export class LandService {
     private readonly encryptionService: EncryptionService,
   ) { }
 
-  async create(createLandDto: CreateLandDto, ownerAddress: string): Promise<Land> {
+  async create(createLandDto: CreateLandDto, user: any): Promise<Land> {
     try {
-      // Valider l'adresse Ethereum
+      // Extract the Ethereum address or private key from user
+      let ownerAddress: string;
+      
+      // Check if user.ethAddress exists and try to process it
+      if (user && user.ethAddress) {
+        try {
+          // If it's already an address (starts with 0x and correct length)
+          if (user.ethAddress.startsWith('0x') && user.ethAddress.length === 42) {
+            ownerAddress = user.ethAddress;
+          } else {
+            // It might be a private key, try to derive address from it
+            const wallet = new ethers.Wallet(user.ethAddress);
+            ownerAddress = await wallet.getAddress();
+          }
+        } catch (error) {
+          this.logger.error(`Failed to derive address from provided value: ${error.message}`);
+          throw new Error('Invalid Ethereum address or private key');
+        }
+      } else if (typeof user === 'string') {
+        // If user parameter is directly the address
+        ownerAddress = user;
+      } else {
+        throw new Error('No Ethereum address provided');
+      }
+      
+      // Validate the derived Ethereum address
       if (!ethers.isAddress(ownerAddress)) {
         throw new Error('Invalid Ethereum address');
       }
 
       this.logger.log(`Starting land creation process at ${new Date().toISOString()} for user: nesssim`);
+      this.logger.log(`Using Ethereum address: ${ownerAddress}`);
+      
       // Définir des valeurs par défaut ou ajuster pour la démo
       const totalTokens = createLandDto.totalTokens || 100; // Valeur par défaut: 100 tokens
 
@@ -50,14 +76,16 @@ export class LandService {
         this.logger.log(`Reducing price for demo from ${pricePerToken} ETH to ${maxDemoPrice} ETH`);
         pricePerToken = maxDemoPrice.toString();
       }
+      
       this.logger.log('Creation parameters:', {
         title: createLandDto.title,
         location: createLandDto.location,
         surface: createLandDto.surface,
-        totalTokens: createLandDto.totalTokens || 100, // Utilise la valeur fournie ou 100 par défaut
-        pricePerToken: createLandDto.pricePerToken || '1', // Utilise la valeur fournie ou 1 par défaut
+        totalTokens: totalTokens,
+        pricePerToken: pricePerToken,
         owner: ownerAddress
       });
+      
       this.logger.log(`Files to process: ${createLandDto.fileBuffers?.documents?.length || 0} documents, ${createLandDto.fileBuffers?.images?.length || 0} images`);
 
       // Ajouter des logs pour vérifier les buffers
@@ -107,7 +135,7 @@ export class LandService {
       }
 
       // 5. Enregistrer sur la blockchain avec des valeurs par défaut non nulles
-
+      // IMPORTANT: Removed the from parameter in the blockchain service call
       const blockchainTx = await this.blockchainService.registerLand({
         title: createLandDto.title,
         location: createLandDto.location,
