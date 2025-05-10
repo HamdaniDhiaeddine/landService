@@ -49,7 +49,7 @@ export class LandController {
       const user = (req as any).user as JWTPayload;
       const body = req.body as any;
 
-      // Au début de votre méthode create, ajoutez:
+      // Debug logging
       console.log('=============== DEBUG COMPLET ===============');
       console.log('Headers:', JSON.stringify((req as any).headers));
       console.log('Files object exists:', !!files);
@@ -79,15 +79,34 @@ export class LandController {
       console.log('User ID:', user.userId);
       console.log('Email:', user.email);
       console.log('Role:', user.role);
-      console.log('Ethereum Address:', user.ethAddress || 'Not found in token');
-      console.log('=============================\n');
-
-      // Vérifier que l'utilisateur a une adresse Ethereum
-      if (!user.ethAddress) {
-        throw new BadRequestException(
-          'Ethereum address is required to register land'
-        );
+      
+      // Get owner address - handle cases with and without ethAddress
+      let ownerAddress: string;
+      
+      if (user.ethAddress) {
+        try {
+          // If it looks like an Ethereum address
+          if (user.ethAddress.startsWith('0x') && user.ethAddress.length === 42) {
+            ownerAddress = user.ethAddress;
+          } else {
+            // Try to derive address from private key
+            const wallet = new ethers.Wallet(user.ethAddress);
+            ownerAddress = await wallet.getAddress();
+            console.log('Derived address from private key:', ownerAddress);
+          }
+        } catch (error) {
+          // If derivation fails, use blockchain service wallet
+          ownerAddress = await this.blockchainService.getWalletAddress();
+          console.log('Using blockchain service wallet address (fallback):', ownerAddress);
+        }
+      } else {
+        // No Ethereum address in user profile, use blockchain service wallet
+        ownerAddress = await this.blockchainService.getWalletAddress();
+        console.log('Using blockchain service wallet address (default):', ownerAddress);
       }
+      
+      console.log('Ethereum Address being used:', ownerAddress || 'Not available');
+      console.log('=============================\n');
 
       // Ajouter l'ID de l'utilisateur depuis le token
       createLandDto.ownerId = user.userId;
@@ -190,7 +209,8 @@ export class LandController {
         amenitiesCount: Object.keys(amenities).length
       });
 
-      return this.landService.create(createLandDto, user.ethAddress);
+      // Use the owner address we determined above
+      return this.landService.create(createLandDto, ownerAddress);
     } catch (error) {
       console.error('❌ Error in create land endpoint:', {
         message: error.message,

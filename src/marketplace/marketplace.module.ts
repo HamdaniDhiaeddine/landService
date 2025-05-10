@@ -5,6 +5,8 @@ import { BlockchainModule } from 'src/blockchain/blockchain.module';
 import { MarketplaceService } from './marketplace.service';
 import { MarketplaceController } from './marketplace.controller';
 import { AuthModule } from 'src/auth/auth.module';
+import { CacheInvalidationService } from './cache-invalidation.service';
+import { CacheRefreshService } from './cache-refresh.service';
 
 @Module({
   imports: [
@@ -13,7 +15,11 @@ import { AuthModule } from 'src/auth/auth.module';
     AuthModule,
   ],
   controllers: [MarketplaceController],
-  providers: [MarketplaceService],
+  providers: [
+    MarketplaceService,
+    CacheInvalidationService,
+    CacheRefreshService
+],
   exports: [MarketplaceService],
 })
 export class MarketplaceModule {}

@@ -1,9 +1,11 @@
-import { Injectable, Logger, NotFoundException, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, InternalServerErrorException, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager'; // Importation depuis @nestjs/cache-manager
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { BlockchainService } from 'src/blockchain/services/blockchain.service';
 import { Land } from 'src/lands/schemas/land.schema';
 import { ethers } from 'ethers';
+import { Cache } from 'cache-manager';
 
 @Injectable()
 export class MarketplaceService {
@@ -12,7 +14,9 @@ export class MarketplaceService {
     constructor(
         @InjectModel(Land.name) private landModel: Model<Land>,
         private readonly blockchainService: BlockchainService,
+        @Inject(CACHE_MANAGER) private cacheManager: Cache
     ) { }
+
 
     /**
      * Récupère tous les tokens possédés par un utilisateur spécifique
@@ -26,71 +30,109 @@ export class MarketplaceService {
             }
 
             const currentDateTime = this.getCurrentDateTime();
+            const cacheKey = `user_tokens_${ethAddress.toLowerCase()}`;
+
+            // 1. Vérifier si les données sont en cache
+            const cachedTokens = await this.cacheManager.get<any[]>(cacheKey);
+            if (cachedTokens && Array.isArray(cachedTokens)) {
+                this.logger.log(`[${currentDateTime}] Récupération des tokens depuis le cache pour l'utilisateur: ${ethAddress}`);
+                return {
+                    success: true,
+                    data: cachedTokens,
+                    count: cachedTokens.length,
+                    message: `Récupéré ${cachedTokens.length} tokens pour l'adresse ${ethAddress} (cache)`,
+                    timestamp: currentDateTime,
+                    fromCache: true
+                };
+            }
+
             this.logger.log(`[${currentDateTime}] Récupération des tokens pour l'utilisateur avec l'adresse: ${ethAddress}`);
 
-            // Get the contracts
+            // 2. Obtenir les contrats
             const landToken = this.blockchainService.getLandToken();
             const marketplace = this.blockchainService.getMarketplace();
 
-            // Define a reasonable maximum token ID to check
-            const MAX_TOKEN_ID = 200; // Adjust as needed
+            // 3. Obtenir la plage de token IDs actifs (peut être mise en cache séparément)
+            let tokenRange = { min: 1, max: 200 }; // Valeurs par défaut
+            try {
+                // Cette méthode devrait être implémentée dans BlockchainService
+                const rangeFromCache = await this.cacheManager.get<{ min: number, max: number }>('token_id_range');
+                if (rangeFromCache) {
+                    tokenRange = rangeFromCache;
+                }
+            } catch (error) {
+                this.logger.warn(`[${currentDateTime}] Impossible de récupérer la plage de tokens, utilisation des valeurs par défaut: ${error.message}`);
+            }
+
+            // 4. Traitement par lots
+            const BATCH_SIZE = 20;
             const userTokens = [];
 
-            this.logger.log(`[${currentDateTime}] Vérification des tokens de 1 à ${MAX_TOKEN_ID}`);
+            // 5. Traiter les tokens par lots
+            for (let batchStart = tokenRange.min; batchStart <= tokenRange.max; batchStart += BATCH_SIZE) {
+                const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, tokenRange.max);
+                const tokenBatch = Array.from({ length: batchEnd - batchStart + 1 }, (_, i) => batchStart + i);
 
-            // Check each token ID
-            for (let tokenId = 1; tokenId <= MAX_TOKEN_ID; tokenId++) {
-                try {
-                    // Skip to next iteration if token doesn't exist
-                    let exists = false;
-                    try {
-                        const ownerAddress = await landToken.ownerOf(tokenId);
-                        exists = true;
-                    } catch (e) {
-                        // Token doesn't exist, skip to next iteration
-                        continue;
-                    }
+                // 5.1 Traiter chaque token du lot en parallèle
+                const batchResults = await Promise.all(
+                    tokenBatch.map(async (tokenId) => {
+                        try {
+                            // Vérifier si le token existe et appartient à l'utilisateur
+                            let ownerAddress;
+                            try {
+                                ownerAddress = await landToken.ownerOf(tokenId);
+                                if (ownerAddress.toLowerCase() !== ethAddress.toLowerCase()) {
+                                    return null; // Ne pas inclure ce token
+                                }
+                            } catch (e) {
+                                return null; // Token n'existe pas
+                            }
 
-                    // Check if the token belongs to the user
-                    const owner = await landToken.ownerOf(tokenId);
-                    if (owner.toLowerCase() !== ethAddress.toLowerCase()) {
-                        continue;
-                    }
+                            // Récupérer les détails du token et du listing en parallèle
+                            const [tokenData, listing] = await Promise.all([
+                                landToken.tokenData(tokenId),
+                                marketplace.listings(tokenId)
+                            ]);
 
-                    // Token belongs to user, get its details
-                    const tokenData = await landToken.tokenData(tokenId);
-                    const landId = Number(tokenData.landId);
+                            const landId = Number(tokenData.landId);
 
-                    // Check if it's listed on marketplace
-                    const listing = await marketplace.listings(tokenId);
+                            // Récupérer les données du terrain de MongoDB
+                            const land = await this.landModel.findOne({ blockchainLandId: landId.toString() }).exec();
 
-                    // Find corresponding land in database
-                    const land = await this.landModel.findOne({ blockchainLandId: landId.toString() }).exec();
+                            return {
+                                tokenId: tokenId,
+                                landId: landId,
+                                tokenNumber: Number(tokenData.tokenNumber),
+                                purchasePrice: ethers.formatEther(tokenData.purchasePrice),
+                                mintDate: new Date(Number(tokenData.mintDate) * 1000).toISOString(),
+                                land: land ? {
+                                    id: land._id.toString(),
+                                    title: land.title || '',
+                                    location: land.location || '',
+                                    surface: land.surface || 0,
+                                    imageUrl: land.imageCIDs && land.imageCIDs.length > 0 ?
+                                        `https://ipfs.io/ipfs/${land.imageCIDs[0]}` : null
+                                } : null,
+                                isListed: listing.isActive,
+                                listingPrice: listing.isActive ? ethers.formatEther(listing.price) : null
+                            };
+                        } catch (error) {
+                            this.logger.debug(`[${currentDateTime}] Erreur lors du traitement du token ${tokenId}: ${error.message}`);
+                            return null;
+                        }
+                    })
+                );
 
-                    userTokens.push({
-                        tokenId: tokenId,
-                        landId: landId,
-                        tokenNumber: Number(tokenData.tokenNumber),
-                        purchasePrice: ethers.formatEther(tokenData.purchasePrice),
-                        mintDate: new Date(Number(tokenData.mintDate) * 1000).toISOString(),
-                        land: land ? {
-                            id: land._id.toString(),
-                            title: land.title || '',
-                            location: land.location || '',
-                            surface: land.surface || 0,
-                            imageUrl: land.imageCIDs && land.imageCIDs.length > 0 ?
-                                `https://ipfs.io/ipfs/${land.imageCIDs[0]}` : null
-                        } : null,
-                        isListed: listing.isActive,
-                        listingPrice: listing.isActive ? ethers.formatEther(listing.price) : null
-                    });
-                } catch (error) {
-                    // Skip errors for individual tokens
-                    continue;
-                }
+                // Ajouter uniquement les résultats non nuls
+                userTokens.push(...batchResults.filter(Boolean));
             }
 
             this.logger.log(`[${currentDateTime}] Trouvé ${userTokens.length} tokens pour l'adresse ${ethAddress}`);
+
+            // 6. Mettre en cache pour les futures requêtes
+            if (userTokens.length > 0) {
+                await this.cacheManager.set(cacheKey, userTokens, 300); // Cache valide pour 5 minutes
+            }
 
             return {
                 success: true,
@@ -104,7 +146,6 @@ export class MarketplaceService {
             throw new InternalServerErrorException(`Échec de la récupération des tokens: ${error.message}`);
         }
     }
-
     /**
    * Récupère tous les tokens mis en vente par un utilisateur spécifique
    * @param ethAddress Adresse Ethereum du vendeur
@@ -286,9 +327,7 @@ export class MarketplaceService {
             if (tokenIds.length !== prices.length) {
                 throw new BadRequestException('Les tableaux de tokens et de prix doivent avoir la même longueur');
             }
-
-            const currentDateTime = "2025-05-04 00:33:31"; // Date et heure actuelles
-            this.logger.log(`[${currentDateTime}] nesssim - Mise en vente de ${tokenIds.length} tokens par ${seller}`);
+            this.logger.log(`Mise en vente de ${tokenIds.length} tokens par ${seller}`);
 
             // Vérifier que tous les tokens appartiennent au vendeur
             const landToken = this.blockchainService.getLandToken();
@@ -312,7 +351,7 @@ export class MarketplaceService {
             if (!isApproved) {
                 const approveTx = await landToken.setApprovalForAll(marketplace.target, true);
                 await approveTx.wait();
-                this.logger.log(`[${currentDateTime}] nesssim - Marketplace approuvé pour les transferts de tokens par ${seller}`);
+                this.logger.log(`Marketplace approuvé pour les transferts de tokens par ${seller}`);
             }
 
             // Lister les tokens
@@ -359,7 +398,6 @@ export class MarketplaceService {
                     tokens: listedTokensDetails,
                     seller: seller,
                     count: tokenIds.length,
-                    timestamp: currentDateTime
                 },
                 message: `${tokenIds.length} tokens mis en vente avec succès`
             };
@@ -558,87 +596,162 @@ export class MarketplaceService {
     }
 
     /**
-     * Récupère tous les tokens listés sur la place de marché
-     * @returns Liste des tokens en vente
+    * Calculates the percentage change between purchase price and current price
+    * @param purchasePrice Price at purchase (string in ETH)
+    * @param currentPrice Current price (string in ETH)
+    * @returns Object with percentage change details
+    */
+    private calculatePriceChange(purchasePrice: string, currentPrice: string) {
+        const purchase = parseFloat(purchasePrice);
+        const current = parseFloat(currentPrice);
+
+        if (purchase === 0) return { percentage: 0, formatted: '0%', isPositive: false };
+
+        const change = ((current - purchase) / purchase) * 100;
+
+        return {
+            percentage: change,
+            formatted: `${change.toFixed(2)}%`,
+            isPositive: change >= 0
+        };
+    }
+
+    /**
+     * Calculates a simple investment potential score
+     * @param price Current price
+     * @param purchasePrice Purchase price
+     * @param location Location (for potential bonus)
+     * @param hoursListed Hours since listing
+     * @returns Score from 1 to 10
      */
-    async getMarketListings() {
+    private calculateInvestmentPotential(
+        price: number,
+        purchasePrice: number,
+        location: string,
+        hoursListed: number
+    ): number {
+        // Base score
+        let score = 5;
+
+        // Price ratio factor
+        if (purchasePrice > 0) {
+            const priceRatio = price / purchasePrice;
+            if (priceRatio < 1.1) score += 2; // Excellent price
+            else if (priceRatio < 1.3) score += 1; // Good price
+            else if (priceRatio > 2) score -= 2; // Overpriced
+        }
+
+        // Premium location bonus
+        const premiumLocations = ['casablanca', 'rabat', 'marrakech', 'tanger'];
+        if (location && premiumLocations.some(loc => location.toLowerCase().includes(loc))) {
+            score += 1;
+        }
+
+        // Recent listing bonus
+        if (hoursListed < 48) score += 1;
+
+        // Ensure score is between 1 and 10
+        return Math.max(1, Math.min(10, score));
+    }
+
+    /**
+     * Converts numerical score to text rating
+     * @param score Numerical score (1-10)
+     * @returns Text rating
+     */
+    private getInvestmentRating(score: number): string {
+        if (score >= 8) return 'Excellent';
+        if (score >= 6) return 'Good';
+        if (score >= 4) return 'Average';
+        if (score >= 2) return 'Poor';
+        return 'Very Poor';
+    }
+
+    /**
+  * Récupère tous les tokens mis en vente avec dates et hash de transactions depuis les événements blockchain
+  */
+    async getMarketplaceListings() {
         try {
             const currentDateTime = this.getCurrentDateTime();
-            this.logger.log(`[${currentDateTime}] Récupération de toutes les annonces du marketplace`);
-
-            // Récupérer les contrats
-            const landToken = this.blockchainService.getLandToken();
-            const marketplace = this.blockchainService.getMarketplace();
-
-            // Définir un nombre maximum raisonnable de tokens à vérifier
-            const MAX_TOKEN_ID = 200; // À ajuster selon votre cas d'utilisation
-
-            const listings = [];
-
-            // Parcourir tous les tokens potentiels
-            for (let tokenId = 1; tokenId <= MAX_TOKEN_ID; tokenId++) {
-                try {
-                    // Vérifier d'abord si le token existe
-                    let exists = false;
-                    try {
-                        await landToken.ownerOf(tokenId);
-                        exists = true;
-                    } catch (e) {
-                        // Le token n'existe pas, passer au suivant
-                        continue;
-                    }
-
-                    if (!exists) continue;
-
-                    // Vérifier si le token est listé
-                    const listing = await marketplace.listings(tokenId);
-
-                    if (listing.isActive) {
-                        // Récupérer les détails du token
-                        const tokenData = await landToken.tokenData(tokenId);
-                        const landId = Number(tokenData.landId);
-
-                        // Récupérer les détails du terrain depuis MongoDB
-                        const land = await this.landModel.findOne({ blockchainLandId: landId.toString() }).exec();
-
-                        listings.push({
-                            tokenId: tokenId,
-                            landId: landId,
-                            price: ethers.formatEther(listing.price),
-                            seller: listing.seller,
-                            land: land ? {
-                                id: land._id.toString(),
-                                title: land.title || '',
-                                location: land.location || '',
-                                surface: land.surface || 0,
-                                imageUrl: land.imageCIDs && land.imageCIDs.length > 0 ?
-                                    `https://ipfs.io/ipfs/${land.imageCIDs[0]}` : null
-                            } : null,
-                            tokenData: {
-                                tokenNumber: Number(tokenData.tokenNumber),
-                                purchasePrice: ethers.formatEther(tokenData.purchasePrice),
-                                mintDate: new Date(Number(tokenData.mintDate) * 1000).toISOString()
-                            }
-                        });
-                    }
-                } catch (error) {
-                    // Ignorer les erreurs individuelles et continuer
-                    continue;
-                }
+            this.logger.log(`[${currentDateTime}] Retrieving marketplace listings`);
+    
+            // Use the optimized blockchain service method
+            const blockchainResponse = await this.blockchainService.getMarketplaceListings();
+            const listings = blockchainResponse.data || [];
+    
+            if (listings.length === 0) {
+                return {
+                    success: true,
+                    data: [],
+                    count: 0,
+                    message: 'No listings found on the marketplace',
+                    timestamp: currentDateTime
+                };
             }
-
-            this.logger.log(`[${currentDateTime}] Récupéré ${listings.length} annonces actives`);
-
+    
+            // Enhance listings with MongoDB data
+            const enhancedListings = await Promise.all(listings.map(async (listing) => {
+                try {
+                    // Get land details from MongoDB
+                    const land = await this.landModel.findOne({ blockchainLandId: listing.landId.toString() }).exec();
+    
+                    // Calculate investment potential
+                    const listingDate = listing.listingTimestamp ? new Date(listing.listingTimestamp * 1000) : new Date();
+                    const hoursListed = Math.floor((new Date().getTime() - listingDate.getTime()) / (1000 * 60 * 60));
+    
+                    // Extract purchase price from the right location
+                    let purchasePrice = listing.purchasePrice;
+                    if (!purchasePrice && listing.tokenData) {
+                        purchasePrice = listing.tokenData.purchasePrice;
+                    }
+    
+                    const investmentScore = this.calculateInvestmentPotential(
+                        parseFloat(listing.price),
+                        parseFloat(purchasePrice),
+                        land?.location || listing.land?.location || '',
+                        hoursListed
+                    );
+    
+                    return {
+                        ...listing,
+                        listingDate: listingDate,
+                        listingDateFormatted: listingDate.toLocaleDateString(),
+                        daysSinceListing: Math.floor(hoursListed / 24),
+                        land: land ? {
+                            id: land._id.toString(),
+                            title: land.title || '',
+                            location: land.location || '',
+                            surface: land.surface || 0,
+                            imageUrl: land.imageCIDs && land.imageCIDs.length > 0 ?
+                                `https://ipfs.io/ipfs/${land.imageCIDs[0]}` : null,
+                            ...listing.land // Merge with blockchain land data
+                        } : listing.land,
+                        formattedPrice: `${listing.price} ETH`,
+                        formattedPurchasePrice: `${purchasePrice} ETH`,
+                        mintDateFormatted: new Date(listing.mintDate).toLocaleDateString(),
+                        priceChangePercentage: this.calculatePriceChange(
+                            purchasePrice,
+                            listing.price
+                        ),
+                        investmentPotential: investmentScore,
+                        investmentRating: this.getInvestmentRating(investmentScore)
+                    };
+                } catch (error) {
+                    this.logger.error(`Error enhancing listing ${listing.tokenId}: ${error.message}`);
+                    return listing;
+                }
+            }));
+    
             return {
                 success: true,
-                data: listings,
-                count: listings.length,
-                message: `Récupéré ${listings.length} annonces actives du marketplace`,
+                data: enhancedListings,
+                count: enhancedListings.length,
+                message: `Retrieved ${enhancedListings.length} marketplace listings`,
                 timestamp: currentDateTime
             };
         } catch (error) {
-            this.logger.error(`Erreur lors de la récupération des annonces du marketplace: ${error.message}`, error.stack);
-            throw new InternalServerErrorException(`Échec de la récupération des annonces: ${error.message}`);
+            this.logger.error(`Error retrieving marketplace listings: ${error.message}`);
+            throw new InternalServerErrorException(`Failed to retrieve listings: ${error.message}`);
         }
     }
 
@@ -652,7 +765,7 @@ export class MarketplaceService {
             this.logger.log(`[${currentDateTime}] Récupération des statistiques du marketplace`);
 
             // Récupérer tous les tokens listés
-            const marketListingsResult = await this.getMarketListings();
+            const marketListingsResult = await this.getMarketplaceListings();
             const listedTokens = marketListingsResult.data;
 
             // Calculer le prix moyen
@@ -713,8 +826,6 @@ export class MarketplaceService {
         }
     }
 
-
-
     /**
      * Fonction utilitaire pour obtenir la date et l'heure actuelles formatées
      * @returns Date et heure au format YYYY-MM-DD HH:MM:SS
@@ -724,152 +835,262 @@ export class MarketplaceService {
         return now.toISOString().replace('T', ' ').substring(0, 19);
     }
 
+
     /**
- * Récupère tous les tokens possédés par un utilisateur avec les informations améliorées
- * @param ethAddress Adresse Ethereum de l'utilisateur
- * @returns Liste des tokens avec prix d'achat et prix de vente actuel
- */
+   * Récupère tous les tokens possédés par un utilisateur avec les informations améliorées
+   * en utilisant les méthodes optimisées de blockchain
+   * @param ethAddress Adresse Ethereum de l'utilisateur
+   * @returns Liste des tokens avec prix d'achat et prix de vente actuel
+   */
     async getEnhancedUserTokens(ethAddress: string) {
         try {
             if (!ethers.isAddress(ethAddress)) {
                 throw new BadRequestException('Adresse Ethereum invalide');
             }
+            this.logger.log(`Récupération des tokens améliorés pour l'utilisateur: ${ethAddress}`);
 
-            const currentDateTime = "2025-05-04 00:38:21"; // Utilisation des valeurs fournies
-            this.logger.log(`[${currentDateTime}] nesssim - Récupération des tokens améliorés pour l'utilisateur: ${ethAddress}`);
-
-            // Récupérer les contrats
+            // 1. Récupérer les contrats
             const landToken = this.blockchainService.getLandToken();
             const marketplace = this.blockchainService.getMarketplace();
             const landRegistry = this.blockchainService.getLandRegistry();
 
-            // Définir un nombre maximum raisonnable de tokens à vérifier
-            const MAX_TOKEN_ID = 200; // À ajuster selon votre cas d'utilisation
+            // 2. AMÉLIORATION: Récupérer directement tous les tokens possédés par l'utilisateur
+            // en utilisant la méthode du smart contract au lieu de scanner tous les tokens
+            const userOwnedTokensResponse = await this.blockchainService.getUserTokens(ethAddress);
+            const userOwnedTokens = userOwnedTokensResponse.data || [];
 
-            const userTokens = [];
+            // 3. AMÉLIORATION: Récupérer directement les tokens listés par l'utilisateur
+            // en utilisant la méthode du smart contract
+            const userListedTokenIds = await marketplace.getListingsByUser(ethAddress);
+
+            // 4. AMÉLIORATION: Obtenir les détails des listings en une seule requête
+            let listingsMap = new Map();
+            if (userListedTokenIds.length > 0) {
+                const [prices, sellers, isActives, timestamps] =
+                    await marketplace.getMultipleListingDetails(userListedTokenIds);
+
+                for (let i = 0; i < userListedTokenIds.length; i++) {
+                    if (isActives[i]) {
+                        const tokenId = Number(userListedTokenIds[i]);
+                        listingsMap.set(tokenId, {
+                            price: ethers.formatEther(prices[i]),
+                            seller: sellers[i],
+                            timestamp: Number(timestamps[i])
+                        });
+                    }
+                }
+            }
+
+            // Si aucun token n'a été trouvé, retourner un résultat vide
+            if (userOwnedTokens.length === 0 && listingsMap.size === 0) {
+                return {
+                    success: true,
+                    data: {
+                        tokens: [],
+                        stats: {
+                            totalTokens: 0,
+                            totalPurchaseValue: "0.000000",
+                            totalCurrentMarketValue: "0.000000",
+                            totalListedValue: "0.000000",
+                            totalProfit: "0.000000",
+                            totalProfitPercentage: "0.00",
+                            countOwned: 0,
+                            countListed: 0
+                        }
+                    },
+                    count: 0,
+                    message: `Aucun token trouvé pour l'adresse ${ethAddress}`,
+                };
+            }
+
+            // 5. Collecter tous les IDs de terrains uniques pour les récupérer efficacement
+            const landIds = new Set();
+            userOwnedTokens.forEach(token => landIds.add(token.landId));
+
+            // Ajouter les ID de terrain des tokens listés qui ne sont pas dans userOwnedTokens
+            for (const tokenId of listingsMap.keys()) {
+                const found = userOwnedTokens.find(t => t.tokenId === tokenId);
+                if (!found) {
+                    try {
+                        const tokenData = await landToken.tokenData(tokenId);
+                        landIds.add(Number(tokenData.landId));
+                    } catch (error) {
+                        this.logger.warn(`Erreur lors de la récupération des données du token ${tokenId}: ${error.message}`);
+                    }
+                }
+            }
+
+            // 6. AMÉLIORATION: Récupérer les détails des terrains en lots
+            const landDetailsMap = new Map();
+            const landIdsArray = Array.from(landIds);
+            const batchSize = 20;
+
+            for (let i = 0; i < landIdsArray.length; i += batchSize) {
+                const batchLandIds = landIdsArray.slice(i, Math.min(i + batchSize, landIdsArray.length));
+                const batchPromises = batchLandIds.map(async landId => {
+                    try {
+                        const landDetails = await landRegistry.getAllLandDetails(landId);
+                        return {
+                            landId,
+                            details: {
+                                location: landDetails[0],
+                                surface: Number(landDetails[1]),
+                                owner: landDetails[2],
+                                isRegistered: landDetails[3],
+                                status: this.blockchainService.getValidationStatusString(Number(landDetails[5])),
+                                totalTokens: Number(landDetails[6]),
+                                availableTokens: Number(landDetails[7]),
+                                pricePerToken: ethers.formatEther(landDetails[8])
+                            }
+                        };
+                    } catch (error) {
+                        this.logger.warn(`Erreur lors de la récupération des détails du terrain ${landId}: ${error.message}`);
+                        return { landId, details: null };
+                    }
+                });
+
+                const batchResults = await Promise.all(batchPromises);
+                batchResults.forEach(result => {
+                    landDetailsMap.set(result.landId, result.details);
+                });
+            }
+
+            // 7. Récupérer les informations des terrains depuis MongoDB en une seule requête
+            const lands = await this.landModel.find({
+                blockchainLandId: { $in: landIdsArray.map(id => id.toString()) }
+            }).exec();
+
+            const landMongoMap = new Map();
+            lands.forEach(land => {
+                landMongoMap.set(Number(land.blockchainLandId), {
+                    id: land._id.toString(),
+                    title: land.title || '',
+                    location: land.location || '',
+                    surface: land.surface || 0,
+                    imageUrl: land.imageCIDs && land.imageCIDs.length > 0 ?
+                        `https://ipfs.io/ipfs/${land.imageCIDs[0]}` : null
+                });
+            });
+
+            // 8. Préparer les données pour les tokens qui sont listés mais pas dans userOwnedTokens
+            const listedNotOwnedTokens = [];
+            for (const tokenId of listingsMap.keys()) {
+                if (!userOwnedTokens.find(t => t.tokenId === tokenId)) {
+                    try {
+                        const tokenData = await landToken.tokenData(tokenId);
+                        listedNotOwnedTokens.push({
+                            tokenId: tokenId,
+                            landId: Number(tokenData.landId),
+                            tokenNumber: Number(tokenData.tokenNumber),
+                            purchasePrice: ethers.formatEther(tokenData.purchasePrice),
+                            mintDate: new Date(Number(tokenData.mintDate) * 1000).toISOString(),
+                            isListed: true,
+                            listingPrice: listingsMap.get(tokenId).price,
+                            seller: listingsMap.get(tokenId).seller
+                        });
+                    } catch (error) {
+                        this.logger.warn(`Erreur lors de la récupération des données du token ${tokenId}: ${error.message}`);
+                    }
+                }
+            }
+
+            // 9. Combiner tous les tokens (possédés et listés non possédés)
+            const allTokens = [...userOwnedTokens, ...listedNotOwnedTokens];
+
+            // 10. Calculs et préparation des données améliorées
             let totalPurchaseValue = 0;
             let totalCurrentValue = 0;
             let totalListedValue = 0;
 
-            // Parcourir tous les tokens potentiels
-            for (let tokenId = 1; tokenId <= MAX_TOKEN_ID; tokenId++) {
-                try {
-                    // Vérifier si le token existe
-                    let owner;
-                    try {
-                        owner = await landToken.ownerOf(tokenId);
-                    } catch (e) {
-                        // Le token n'existe pas, passer au suivant
-                        continue;
-                    }
+            const enhancedTokens = allTokens.map(token => {
+                // Déterminer le propriétaire et si le token est listé
+                const isListedByUser = listingsMap.has(token.tokenId);
+                const isOwnedByUser = userOwnedTokens.some(t => t.tokenId === token.tokenId);
+                const ownerStatus = isOwnedByUser ? "you" : "marketplace";
 
-                    // Vérifier si le token appartient à l'utilisateur
-                    if (owner.toLowerCase() !== ethAddress.toLowerCase()) {
-                        // Ce n'est pas le propriétaire, mais vérifions si ce token est listé par notre utilisateur
-                        const listing = await marketplace.listings(tokenId);
-                        if (listing.isActive && listing.seller.toLowerCase() === ethAddress.toLowerCase()) {
-                            // Ce token est listé par notre utilisateur mais détenu par le marketplace
-                            owner = listing.seller;
-                        } else {
-                            // Ni propriétaire ni vendeur, passer au suivant
-                            continue;
-                        }
-                    }
+                // Récupérer les détails du terrain
+                const landDetails = landDetailsMap.get(token.landId);
+                const landMongoDetails = landMongoMap.get(token.landId);
 
-                    // Le token appartient à l'utilisateur ou est listé par lui, récupérer les détails
-                    const tokenData = await landToken.tokenData(tokenId);
-                    const landId = Number(tokenData.landId);
+                // Calculer les prix
+                const purchasePrice = token.purchasePrice;
+                const currentMarketPrice = landDetails ? landDetails.pricePerToken : purchasePrice;
+                const listingPrice = isListedByUser ? listingsMap.get(token.tokenId).price : null;
 
-                    // Récupérer les détails du terrain
-                    let landDetails;
-                    try {
-                        landDetails = await landRegistry.getAllLandDetails(landId);
-                    } catch (error) {
-                        this.logger.warn(`[${currentDateTime}] Erreur lors de la récupération des détails du terrain ${landId}: ${error.message}`);
-                    }
+                // Calculer les valeurs pour les statistiques
+                const purchasePriceValue = parseFloat(purchasePrice);
+                const currentMarketPriceValue = parseFloat(currentMarketPrice);
+                const listingPriceValue = listingPrice ? parseFloat(listingPrice) : null;
 
-                    // Récupérer les informations du terrain depuis MongoDB
-                    const land = await this.landModel.findOne({ blockchainLandId: landId.toString() }).exec();
-
-                    // Vérifier si le token est listé
-                    const listing = await marketplace.listings(tokenId);
-                    const isListed = listing.isActive;
-
-                    // Calculer les valeurs
-                    const purchasePrice = ethers.formatEther(tokenData.purchasePrice);
-                    const currentMarketPrice = landDetails ? ethers.formatEther(landDetails[8]) : purchasePrice; // pricePerToken ou prix d'achat par défaut
-                    const listingPrice = isListed ? ethers.formatEther(listing.price) : null;
-
-                    // Calculer les variations
-                    const purchasePriceValue = parseFloat(purchasePrice);
-                    const currentMarketPriceValue = parseFloat(currentMarketPrice);
-                    const listingPriceValue = listingPrice ? parseFloat(listingPrice) : null;
-
-                    // Variations en pourcentage
-                    let marketPriceChange = null;
-                    if (purchasePriceValue > 0 && currentMarketPriceValue > 0) {
-                        marketPriceChange = ((currentMarketPriceValue - purchasePriceValue) / purchasePriceValue) * 100;
-                    }
-
-                    let listingPriceChange = null;
-                    if (purchasePriceValue > 0 && listingPriceValue) {
-                        listingPriceChange = ((listingPriceValue - purchasePriceValue) / purchasePriceValue) * 100;
-                    }
-
-                    // Mise à jour des totaux
-                    totalPurchaseValue += purchasePriceValue;
-                    totalCurrentValue += currentMarketPriceValue;
-                    if (listingPriceValue) totalListedValue += listingPriceValue;
-
-                    // Ajouter le token avec les informations améliorées
-                    userTokens.push({
-                        tokenId: tokenId,
-                        landId: landId,
-                        tokenNumber: Number(tokenData.tokenNumber),
-                        owner: owner.toLowerCase() === ethAddress.toLowerCase() ? "you" : "marketplace",
-                        purchaseInfo: {
-                            price: purchasePrice,
-                            date: new Date(Number(tokenData.mintDate) * 1000).toISOString(),
-                            formattedPrice: `${purchasePrice} ETH`
-                        },
-                        currentMarketInfo: {
-                            price: currentMarketPrice,
-                            change: marketPriceChange,
-                            changeFormatted: marketPriceChange !== null ? `${marketPriceChange.toFixed(2)}%` : "N/A",
-                            formattedPrice: `${currentMarketPrice} ETH`
-                        },
-                        listingInfo: isListed ? {
-                            price: listingPrice,
-                            seller: listing.seller,
-                            change: listingPriceChange,
-                            changeFormatted: listingPriceChange !== null ? `${listingPriceChange.toFixed(2)}%` : "N/A",
-                            formattedPrice: `${listingPrice} ETH`
-                        } : null,
-                        isListed: isListed,
-                        land: land ? {
-                            id: land._id.toString(),
-                            title: land.title || '',
-                            location: land.location || '',
-                            surface: land.surface || 0,
-                            imageUrl: land.imageCIDs && land.imageCIDs.length > 0 ?
-                                `https://ipfs.io/ipfs/${land.imageCIDs[0]}` : null
-                        } : landDetails ? {
-                            location: landDetails[0],
-                            surface: Number(landDetails[1]),
-                            owner: landDetails[2]
-                        } : null
-                    });
-                } catch (error) {
-                    // Ignorer les erreurs individuelles et continuer
-                    this.logger.debug(`[${currentDateTime}] Erreur lors du traitement du token ${tokenId}: ${error.message}`);
-                    continue;
+                // Calculer les variations
+                let marketPriceChange = null;
+                if (purchasePriceValue > 0 && currentMarketPriceValue > 0) {
+                    marketPriceChange = ((currentMarketPriceValue - purchasePriceValue) / purchasePriceValue) * 100;
                 }
-            }
 
-            this.logger.log(`[${currentDateTime}] Récupéré ${userTokens.length} tokens améliorés pour ${ethAddress}`);
+                let listingPriceChange = null;
+                if (purchasePriceValue > 0 && listingPriceValue) {
+                    listingPriceChange = ((listingPriceValue - purchasePriceValue) / purchasePriceValue) * 100;
+                }
 
-            // Trier les tokens: d'abord les tokens possédés, puis les tokens listés
-            userTokens.sort((a, b) => {
+                // Mise à jour des totaux
+                totalPurchaseValue += purchasePriceValue;
+                totalCurrentValue += currentMarketPriceValue;
+                if (listingPriceValue) totalListedValue += listingPriceValue;
+
+                // Calculer les heures écoulées depuis la mise en vente
+                const hoursListed = isListedByUser && listingsMap.get(token.tokenId).timestamp ?
+                    Math.floor((new Date().getTime() - new Date(listingsMap.get(token.tokenId).timestamp * 1000).getTime()) / (1000 * 60 * 60)) : 0;
+
+                // Calculer le score de potentiel d'investissement
+                const investmentScore = isListedByUser ? this.calculateInvestmentPotential(
+                    listingPriceValue,
+                    purchasePriceValue,
+                    landDetails?.location || '',
+                    hoursListed
+                ) : null;
+
+                // Construire l'objet token amélioré
+                return {
+                    tokenId: token.tokenId,
+                    landId: token.landId,
+                    tokenNumber: token.tokenNumber,
+                    owner: ownerStatus,
+                    purchaseInfo: {
+                        price: purchasePrice,
+                        date: token.mintDate,
+                        formattedPrice: `${purchasePrice} ETH`
+                    },
+                    currentMarketInfo: {
+                        price: currentMarketPrice,
+                        change: marketPriceChange,
+                        changeFormatted: marketPriceChange !== null ? `${marketPriceChange.toFixed(2)}%` : "N/A",
+                        formattedPrice: `${currentMarketPrice} ETH`
+                    },
+                    listingInfo: isListedByUser ? {
+                        price: listingPrice,
+                        seller: listingsMap.get(token.tokenId).seller,
+                        change: listingPriceChange,
+                        changeFormatted: listingPriceChange !== null ? `${listingPriceChange.toFixed(2)}%` : "N/A",
+                        formattedPrice: `${listingPrice} ETH`,
+                        listedAt: listingsMap.get(token.tokenId).timestamp ?
+                            new Date(listingsMap.get(token.tokenId).timestamp * 1000).toISOString() :
+                            null,
+                    } : null,
+                    isListed: isListedByUser,
+                    land: {
+                        ...(landMongoDetails || {}),
+                        ...(landDetails || {})
+                    },
+                    investmentMetrics: isListedByUser ? {
+                        potential: investmentScore,
+                        rating: this.getInvestmentRating(investmentScore)
+                    } : null
+                };
+            });
+
+            // 11. Trier les tokens: possédés d'abord, puis listés
+            enhancedTokens.sort((a, b) => {
                 // D'abord par propriété (possédés avant listés)
                 if (a.owner === "you" && b.owner !== "you") return -1;
                 if (a.owner !== "you" && b.owner === "you") return 1;
@@ -881,9 +1102,9 @@ export class MarketplaceService {
                 return a.tokenId - b.tokenId;
             });
 
-            // Statistiques globales
+            // 12. Statistiques globales
             const stats = {
-                totalTokens: userTokens.length,
+                totalTokens: enhancedTokens.length,
                 totalPurchaseValue: totalPurchaseValue.toFixed(6),
                 totalCurrentMarketValue: totalCurrentValue.toFixed(6),
                 totalListedValue: totalListedValue.toFixed(6),
@@ -891,287 +1112,23 @@ export class MarketplaceService {
                 totalProfitPercentage: totalPurchaseValue > 0
                     ? (((totalCurrentValue - totalPurchaseValue) / totalPurchaseValue) * 100).toFixed(2)
                     : "0.00",
-                countOwned: userTokens.filter(t => t.owner === "you").length,
-                countListed: userTokens.filter(t => t.isListed).length
+                countOwned: enhancedTokens.filter(t => t.owner === "you").length,
+                countListed: enhancedTokens.filter(t => t.isListed).length
             };
 
             return {
                 success: true,
                 data: {
-                    tokens: userTokens,
+                    tokens: enhancedTokens,
                     stats: stats
                 },
-                count: userTokens.length,
-                message: `Récupéré ${userTokens.length} tokens améliorés pour l'adresse ${ethAddress}`,
-                timestamp: currentDateTime
+                count: enhancedTokens.length,
+                message: `Récupéré ${enhancedTokens.length} tokens améliorés pour l'adresse ${ethAddress}`,
             };
         } catch (error) {
             this.logger.error(`Erreur lors de la récupération des tokens améliorés: ${error.message}`, error.stack);
             throw new InternalServerErrorException(`Échec de la récupération des tokens améliorés: ${error.message}`);
         }
     }
-    /**
-     * Récupère la date de mise en vente d'un token et le hash de transaction depuis les événements blockchain
-     * @param tokenId ID du token
-     * @returns Objet contenant la date de listing et le hash de transaction, ou null si non trouvés
-     */
-    private async getTokenListingDetails(tokenId: number): Promise<{ date: Date, txHash: string } | null> {
-        try {
-            this.logger.log(`Récupération des détails de listing pour le token ${tokenId}`);
-
-            const provider = this.blockchainService.getProvider();
-            const marketplace = this.blockchainService.getMarketplace();
-
-            // Créer une interface pour l'événement TokenListed
-            const eventInterface = new ethers.Interface([
-                "event TokenListed(uint256 indexed tokenId, uint256 price, address indexed seller)"
-            ]);
-
-            // Construire un filtre pour l'événement
-            const filter = {
-                address: marketplace.target,
-                topics: [
-                    // Hash de l'événement TokenListed
-                    ethers.id("TokenListed(uint256,uint256,address)"),
-                    // Encodage du tokenId pour le filtrage
-                    ethers.toBeHex(tokenId, 32)
-                ]
-            };
-
-            // Obtenir le bloc actuel
-            const currentBlock = await provider.getBlockNumber();
-            this.logger.log(`Bloc actuel: ${currentBlock}`);
-
-            // Chercher dans les 10000 derniers blocs (ajuster selon vos besoins)
-            const fromBlock = Math.max(0, currentBlock - 10000);
-            this.logger.log(`Recherche d'événements du bloc ${fromBlock} au bloc ${currentBlock}`);
-
-            // Récupérer les logs correspondants
-            const logs = await provider.getLogs({
-                ...filter,
-                fromBlock,
-                toBlock: currentBlock
-            });
-
-            this.logger.log(`Trouvé ${logs.length} événements de listing pour le token ${tokenId}`);
-
-            if (logs.length === 0) {
-                return null;
-            }
-
-            // Trouver l'événement le plus récent qui correspond à un listing actif
-            const sortedLogs = [...logs].sort((a, b) => b.blockNumber - a.blockNumber);
-            const latestLog = sortedLogs[0];
-
-            // Obtenir le bloc pour déterminer la date
-            const block = await provider.getBlock(latestLog.blockNumber);
-
-            if (!block || !block.timestamp) {
-                this.logger.warn(`Impossible de récupérer le timestamp du bloc ${latestLog.blockNumber}`);
-                return null;
-            }
-
-            // Récupérer le hash de transaction du log
-            const txHash = latestLog.transactionHash;
-            const listingDate = new Date(Number(block.timestamp) * 1000);
-
-            this.logger.log(`Date de listing du token ${tokenId}: ${listingDate.toISOString()}, txHash: ${txHash}`);
-
-            return {
-                date: listingDate,
-                txHash: txHash
-            };
-        } catch (error) {
-            this.logger.error(`Erreur lors de la récupération des détails de listing du token ${tokenId}: ${error.message}`);
-            return null;
-        }
-    }
-    /**
-  * Récupère tous les tokens mis en vente avec dates et hash de transactions depuis les événements blockchain
-  */
-    async getMarketplaceListings() {
-        try {
-            const currentDateTime = "2025-05-04 17:26:23";
-            this.logger.log(`[${currentDateTime}] nesssim - Récupération des listings du marketplace`);
-
-            // Récupérer les listings depuis la blockchain
-            const blockchainResponse = await this.blockchainService.getMarketplaceListings();
-            const blockchainListings = blockchainResponse.data || [];
-
-            this.logger.log(`[${currentDateTime}] nesssim - Trouvé ${blockchainListings.length} tokens en vente sur la blockchain`);
-
-            // Enrichir les listings avec les données des événements blockchain
-            const enhancedListings = await Promise.all(blockchainListings.map(async (listing) => {
-                try {
-                    // Récupérer la date de listing et le hash de transaction depuis les événements blockchain
-                    const listingDetails = await this.getTokenListingDetails(listing.tokenId);
-
-                    // Extraire les données nécessaires de la structure reçue
-                    let purchasePrice;
-
-                    // Si le prix d'achat est directement dans listing
-                    if (listing.purchasePrice) {
-                        purchasePrice = listing.purchasePrice;
-                    }
-                    // Si le prix est dans un objet tokenData
-                    else if (listing.tokenData && listing.tokenData.purchasePrice) {
-                        purchasePrice = listing.tokenData.purchasePrice;
-                    }
-                    // Valeur par défaut
-                    else {
-                        purchasePrice = "0";
-                    }
-
-                    const mintDate = listing.mintDate || (listing.tokenData ? listing.tokenData.mintDate : null) || new Date().toISOString();
-                    const price = listing.price || "0";
-
-                    // Récupérer les données de localisation
-                    const location = listing.land?.location || '';
-
-                    // Calculer les heures depuis la mise en vente
-                    const hoursListed = listingDetails?.date ?
-                        Math.floor((new Date().getTime() - listingDetails.date.getTime()) / (1000 * 60 * 60)) :
-                        0;
-
-                    // AJOUT: Calculer le score de potentiel d'investissement
-                    const investmentScore = calculateInvestmentPotential(
-                        parseFloat(price),
-                        parseFloat(purchasePrice),
-                        location,
-                        hoursListed
-                    );
-
-                    this.logger.debug(`[${currentDateTime}] nesssim - Token ${listing.tokenId}: Score d'investissement calculé = ${investmentScore}`);
-
-                    // Construire l'objet enrichi basé sur la structure existante
-                    return {
-                        // Conserver les données originales
-                        ...listing,
-
-                        // Ajouter les informations de date de listing et transaction
-                        listingDate: listingDetails?.date,
-                        listingDateFormatted: listingDetails?.date ? listingDetails.date.toLocaleDateString() : 'Non disponible',
-                        listingTimestamp: listingDetails?.date ? listingDetails.date.getTime() : 0,
-                        daysSinceListing: listingDetails?.date ? Math.floor((new Date().getTime() - listingDetails.date.getTime()) / (1000 * 60 * 60 * 24)) : null,
-                        listingTxHash: listingDetails?.txHash || null,
-                        etherscanUrl: listingDetails?.txHash ? `https://sepolia.etherscan.io/tx/${listingDetails.txHash}` : null,
-
-                        // Formats lisibles pour l'affichage
-                        formattedPrice: `${price} ETH`,
-                        formattedPurchasePrice: `${purchasePrice} ETH`,
-                        mintDateFormatted: new Date(mintDate).toLocaleDateString(),
-
-                        // Calculer la différence de prix
-                        priceChangePercentage: calculatePriceChange(purchasePrice, price),
-
-                        // Ajouter des indicateurs pour l'UI
-                        isRecentlyListed: listingDetails?.date ? Math.floor((new Date().getTime() - listingDetails.date.getTime()) / (1000 * 60 * 60 * 24)) < 7 : false,
-                        isHighlyProfitable: parseFloat(price) > parseFloat(purchasePrice) * 1.5,
-
-                        // AJOUT: Ajouter le score d'investissement
-                        investmentPotential: investmentScore,
-                        investmentRating: getInvestmentRating(investmentScore)
-                    };
-                } catch (error) {
-                    this.logger.error(`[${currentDateTime}] nesssim - Erreur lors de l'enrichissement du listing ${listing.tokenId}: ${error.message}`);
-                    return listing; // Retourner le listing original en cas d'erreur
-                }
-            }));
-
-            // Trier par date de listing si disponible
-            try {
-                enhancedListings.sort((a, b) => {
-                    if (!a.listingTimestamp && !b.listingTimestamp) return 0;
-                    if (!a.listingTimestamp) return 1;
-                    if (!b.listingTimestamp) return -1;
-                    return b.listingTimestamp - a.listingTimestamp;
-                });
-            } catch (sortError) {
-                this.logger.warn(`[${currentDateTime}] nesssim - Erreur lors du tri: ${sortError.message}`);
-            }
-
-            return {
-                success: true,
-                data: enhancedListings,
-                count: enhancedListings.length,
-                message: `Récupéré ${enhancedListings.length} tokens en vente sur le marketplace`,
-                timestamp: currentDateTime
-            };
-        } catch (error) {
-            const currentDateTime = "2025-05-04 17:26:23";
-            this.logger.error(`[${currentDateTime}] nesssim - Erreur lors de la récupération des listings: ${error.message}`);
-            throw new InternalServerErrorException(`Échec de la récupération des listings: ${error.message}`);
-        }
-    }
-}
-/**
- * Calcule le pourcentage de changement entre le prix d'achat et le prix de vente
- * @param purchasePrice Prix d'achat (string en ETH)
- * @param currentPrice Prix actuel (string en ETH)
- * @returns Objet contenant le pourcentage et une version formatée
- */
-function calculatePriceChange(purchasePrice: string, currentPrice: string) {
-    const purchase = parseFloat(purchasePrice);
-    const current = parseFloat(currentPrice);
-
-    if (purchase === 0) return { percentage: 0, formatted: '0%', isPositive: false };
-
-    const change = ((current - purchase) / purchase) * 100;
-
-    return {
-        percentage: change,
-        formatted: `${change.toFixed(2)}%`,
-        isPositive: change >= 0
-    };
 }
 
-/**
- * Calcule un score simple de potentiel d'investissement
- * @param price Prix actuel
- * @param purchasePrice Prix d'achat
- * @param location Emplacement (pour bonus potentiel)
- * @param hoursListed Heures depuis la mise en vente
- * @returns Score de 1 à 10
- */
-function calculateInvestmentPotential(
-    price: number,
-    purchasePrice: number,
-    location: string,
-    hoursListed: number
-): number {
-    // Facteur basé sur la différence de prix
-    let score = 5; // Score de base
-
-    // Plus le prix est proche du prix d'achat, meilleur est l'investissement
-    if (purchasePrice > 0) {
-        const priceRatio = price / purchasePrice;
-        if (priceRatio < 1.1) score += 2; // Très bon prix
-        else if (priceRatio < 1.3) score += 1; // Prix raisonnable
-        else if (priceRatio > 2) score -= 2; // Prix trop élevé
-    }
-
-    // Bonus pour certains emplacements premium
-    const premiumLocations = ['casablanca', 'rabat', 'marrakech', 'tanger'];
-    if (location && premiumLocations.some(loc => location.toLowerCase().includes(loc))) {
-        score += 1;
-    }
-
-    // Bonus pour les listings récents (moins de 48 heures)
-    if (hoursListed < 48) score += 1;
-
-    // S'assurer que le score reste entre 1 et 10
-    return Math.max(1, Math.min(10, score));
-}
-
-/**
- * Convertit un score numérique en notation textuelle pour l'affichage
- * @param score Score numérique (1-10)
- * @returns Évaluation textuelle
- */
-function getInvestmentRating(score: number): string {
-    if (score >= 8) return 'Excellent';
-    if (score >= 6) return 'Bon';
-    if (score >= 4) return 'Moyen';
-    if (score >= 2) return 'Faible';
-    return 'Très faible';
-}

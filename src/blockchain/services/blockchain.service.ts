@@ -398,7 +398,7 @@ export class BlockchainService implements OnModuleInit {
     }
   }
 
-  private getValidationStatusString(status: number): string {
+  public getValidationStatusString(status: number): string {
     const statusMap = {
       0: 'EN_ATTENTE',
       1: 'VALIDE',
@@ -1325,80 +1325,317 @@ export class BlockchainService implements OnModuleInit {
     }
   }
 
+
+
   /**
-   * Récupère tous les tokens listés sur le marketplace
-   * @returns Liste des tokens en vente
-   */
-  async getMarketplaceListings() {
+ * Obtient la plage de token IDs active (min et max)
+ * Cette méthode évite de vérifier tous les tokens potentiels
+ */
+  async getTokenIdRange() {
     try {
-      this.logger.log(` Récupération des listings du marketplace`);
+      this.logger.log(`[2025-05-05 09:23:17] nesssim - Récupération de la plage de tokens actifs`);
 
-      const listings = [];
-      const MAX_TOKEN_ID_TO_CHECK = 1000; // Limite arbitraire, à ajuster
+      const landToken = this.getLandToken();
 
-      // Parcourir tous les tokens possibles
-      for (let tokenId = 1; tokenId <= MAX_TOKEN_ID_TO_CHECK; tokenId++) {
+      // Essayer d'obtenir le dernier token ID via une approche binaire
+      let maxTokenId = await this.findMaxTokenIdBinary();
+
+      this.logger.log(`[2025-05-05 09:23:17] nesssim - Plage de tokens trouvée: 1 à ${maxTokenId}`);
+
+      return {
+        min: 1,
+        max: maxTokenId
+      };
+    } catch (error) {
+      this.logger.error(`[2025-05-05 09:23:17] nesssim - Erreur lors de la récupération de la plage de tokens: ${error.message}`);
+      return { min: 1, max: 200 }; // Valeurs par défaut en cas d'erreur
+    }
+  }
+
+  /**
+   * Utilise une recherche binaire pour trouver rapidement le token ID maximum
+   * Beaucoup plus efficace que de vérifier chaque token séquentiellement
+   */
+  private async findMaxTokenIdBinary(upperBound = 1000) {
+    let left = 1;
+    let right = upperBound;
+    const landToken = this.getLandToken();
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+
+      try {
+        // Vérifier si le token au milieu existe
+        await landToken.ownerOf(mid);
+        // Si nous sommes ici, le token existe, donc chercher à droite
+        left = mid + 1;
+      } catch (error) {
+        // Le token n'existe pas, chercher à gauche
+        right = mid - 1;
+      }
+    }
+
+    return right; // Le dernier token valide
+  }
+
+  /**
+   * Récupère efficacement les propriétaires d'un lot de tokens
+   * @param tokenIds Liste des IDs de tokens à vérifier
+   * @returns Map associant chaque tokenId à son propriétaire (si le token existe)
+   */
+  async getTokenOwners(tokenIds: number[]): Promise<Record<number, string>> {
+    try {
+      this.logger.log(` Récupération des propriétaires pour ${tokenIds.length} tokens`);
+
+      const landToken = this.getLandToken();
+      const ownersMap: Record<number, string> = {};
+
+      // Traiter les requêtes en parallèle par petits groupes
+      const PARALLEL_BATCH_SIZE = 5;
+      for (let i = 0; i < tokenIds.length; i += PARALLEL_BATCH_SIZE) {
+        const batch = tokenIds.slice(i, i + PARALLEL_BATCH_SIZE);
+
+        // Créer des promesses pour chaque token du lot
+        const ownerPromises = batch.map(async (tokenId) => {
+          try {
+            const owner = await landToken.ownerOf(tokenId);
+            return { tokenId, owner };
+          } catch (error) {
+            // Token n'existe pas ou autre erreur
+            return { tokenId, owner: null };
+          }
+        });
+
+        // Attendre toutes les promesses du lot
+        const results = await Promise.all(ownerPromises);
+
+        // Mettre à jour la carte des propriétaires
+        results.forEach(({ tokenId, owner }) => {
+          if (owner) {
+            ownersMap[tokenId] = owner;
+          }
+        });
+      }
+
+      return ownersMap;
+    } catch (error) {
+      this.logger.error(`[2025-05-05 09:23:17] nesssim - Erreur lors de la récupération des propriétaires: ${error.message}`);
+      return {};
+    }
+  }
+  /**
+   * Construit efficacement un index des tokens actuellement listés sur le marketplace
+   * en utilisant les événements blockchain
+   */
+  async buildTokenIndex() {
+    try {
+      this.logger.log(`[2025-05-05 09:23:17] nesssim - Construction de l'index des tokens du marketplace`);
+
+      // Récupérer le provider et le contrat marketplace
+      const provider = this.getProvider();
+      const marketplace = this.getMarketplace();
+
+      // Obtenir le bloc actuel et calculer le bloc de départ (10000 blocs en arrière)
+      const currentBlock = await provider.getBlockNumber();
+      const fromBlock = Math.max(0, currentBlock - 10000);
+
+      this.logger.log(`[2025-05-05 09:23:17] nesssim - Recherche d'événements du bloc ${fromBlock} au bloc ${currentBlock}`);
+
+      // Créer une interface pour les événements
+      const eventInterface = new ethers.Interface([
+        "event TokenListed(uint256 indexed tokenId, uint256 price, address indexed seller)",
+        "event TokenSold(uint256 indexed tokenId, address indexed buyer, address indexed seller)",
+        "event ListingCancelled(uint256 indexed tokenId, address indexed seller)"
+      ]);
+
+      // Récupérer les événements pertinents
+      const [listedEvents, soldEvents, cancelledEvents] = await Promise.all([
+        // Événements de mise en vente
+        provider.getLogs({
+          address: marketplace.target,
+          topics: [ethers.id("TokenListed(uint256,uint256,address)")],
+          fromBlock,
+          toBlock: currentBlock
+        }),
+        // Événements de vente
+        provider.getLogs({
+          address: marketplace.target,
+          topics: [ethers.id("TokenSold(uint256,address,address)")],
+          fromBlock,
+          toBlock: currentBlock
+        }),
+        // Événements d'annulation
+        provider.getLogs({
+          address: marketplace.target,
+          topics: [ethers.id("ListingCancelled(uint256,address)")],
+          fromBlock,
+          toBlock: currentBlock
+        })
+      ]);
+
+      this.logger.log(`[2025-05-05 09:23:17] nesssim - Événements trouvés: ${listedEvents.length} listings, ${soldEvents.length} ventes, ${cancelledEvents.length} annulations`);
+
+      // Créer un map pour suivre l'état de chaque token
+      const tokenStatusMap: Record<string, {
+        isListed: boolean;
+        price?: string;
+        seller?: string;
+        listingBlock?: number;
+        listingTxHash?: string;
+        blockTimestamp?: number;
+      }> = {};
+
+      // Traiter les événements dans l'ordre chronologique (blocs)
+
+      // 1. Traiter les mises en vente
+      for (const event of listedEvents) {
         try {
-          // Vérifier si le token existe
-          const exists = await this.landToken.exists(tokenId);
-          if (!exists) continue;
+          const parsed = eventInterface.parseLog({
+            topics: event.topics,
+            data: event.data
+          });
 
-          // Vérifier si le token est listé
-          const listing = await this.marketplace.listings(tokenId);
+          const tokenId = parsed.args[0].toString();
+          const price = parsed.args[1];
+          const seller = parsed.args[2];
 
-          if (listing.isActive) {
-            // Récupérer les données du token
-            const tokenData = await this.landToken.tokenData(tokenId);
-            const landId = Number(tokenData.landId);
+          // Récupérer le timestamp du bloc si nécessaire
+          let blockTimestamp;
+          try {
+            const block = await provider.getBlock(event.blockNumber);
+            blockTimestamp = block ? Number(block.timestamp) : undefined;
+          } catch (error) {
+            blockTimestamp = undefined;
+          }
 
-            // Récupérer les détails du terrain
-            let landDetails;
-            try {
-              landDetails = await this.landRegistry.getAllLandDetails(landId);
-            } catch (error) {
-              this.logger.warn(`[${this.formatDate()}] Erreur lors de la récupération des détails du terrain ${landId}: ${error.message}`);
-            }
+          tokenStatusMap[tokenId] = {
+            isListed: true,
+            price: ethers.formatEther(price),
+            seller: seller,
+            listingBlock: event.blockNumber,
+            listingTxHash: event.transactionHash,
+            blockTimestamp
+          };
+        } catch (error) {
+          continue; // Ignorer les erreurs individuelles
+        }
+      }
 
-            listings.push({
-              tokenId: tokenId,
-              landId: landId,
-              price: ethers.formatEther(listing.price),
-              seller: listing.seller,
-              tokenNumber: Number(tokenData.tokenNumber),
-              purchasePrice: ethers.formatEther(tokenData.purchasePrice),
-              mintDate: new Date(Number(tokenData.mintDate) * 1000).toISOString(),
-              land: landDetails ? {
-                location: landDetails[0],
-                surface: Number(landDetails[1]),
-                owner: landDetails[2],
-                isRegistered: landDetails[3],
-                status: this.getValidationStatusString(Number(landDetails[5])),
-                totalTokens: Number(landDetails[6]),
-                availableTokens: Number(landDetails[7]),
-                pricePerToken: ethers.formatEther(landDetails[8])
-              } : null
-            });
+      // 2. Mettre à jour d'après les ventes (marquer comme non listés)
+      for (const event of soldEvents) {
+        try {
+          const parsed = eventInterface.parseLog({
+            topics: event.topics,
+            data: event.data
+          });
+
+          const tokenId = parsed.args[0].toString();
+
+          if (tokenStatusMap[tokenId]) {
+            tokenStatusMap[tokenId].isListed = false;
           }
         } catch (error) {
-          // Ignorer les erreurs pour les tokens individuels
           continue;
         }
       }
 
-      this.logger.log(`[${this.formatDate()}] Trouvé ${listings.length} tokens listés sur le marketplace`);
+      // 3. Mettre à jour d'après les annulations (marquer comme non listés)
+      for (const event of cancelledEvents) {
+        try {
+          const parsed = eventInterface.parseLog({
+            topics: event.topics,
+            data: event.data
+          });
 
-      return {
-        success: true,
-        data: listings,
-        count: listings.length,
-        message: `Récupéré ${listings.length} listings actifs du marketplace`,
-        timestamp: this.formatDate()
-      };
+          const tokenId = parsed.args[0].toString();
+
+          if (tokenStatusMap[tokenId]) {
+            tokenStatusMap[tokenId].isListed = false;
+          }
+        } catch (error) {
+          continue;
+        }
+      }
+
+      // Construire l'index final des tokens listés actifs
+      const tokenIndex = [];
+
+      for (const [tokenId, status] of Object.entries(tokenStatusMap)) {
+        if (status.isListed) {
+          tokenIndex.push({
+            tokenId: parseInt(tokenId),
+            price: status.price,
+            seller: status.seller,
+            listingBlock: status.listingBlock,
+            listingTxHash: status.listingTxHash,
+            listingDate: status.blockTimestamp ? new Date(status.blockTimestamp * 1000) : undefined
+          });
+        }
+      }
+
+      this.logger.log(`[2025-05-05 09:23:17] nesssim - Index construit avec ${tokenIndex.length} tokens listés actifs`);
+      return tokenIndex;
     } catch (error) {
-      this.logger.error(`Erreur lors de la récupération des listings: ${error.message}`);
-      throw new Error(`Échec de la récupération des listings: ${error.message}`);
+      this.logger.error(`[2025-05-05 09:23:17] nesssim - Erreur lors de la construction de l'index: ${error.message}`);
+      return [];
     }
   }
+
+  async getWalletAddress(): Promise<string> {
+    return await this.signer.getAddress();
+  }
+
+  /**
+   * Récupère les détails de plusieurs tokens en parallèle
+   * @param tokenIds Liste des IDs de tokens
+   * @returns Détails des tokens
+   */
+  async getMultipleTokensDetails(tokenIds: number[]) {
+    if (!tokenIds || tokenIds.length === 0) return [];
+
+    this.logger.log(` Récupération des détails pour ${tokenIds.length} tokens`);
+
+    const landToken = this.getLandToken();
+    const marketplace = this.getMarketplace();
+
+    // Récupérer les détails en parallèle par lots
+    const BATCH_SIZE = 5;
+    const allResults = [];
+
+    for (let i = 0; i < tokenIds.length; i += BATCH_SIZE) {
+      const batch = tokenIds.slice(i, i + BATCH_SIZE);
+
+      const batchPromises = batch.map(async (tokenId) => {
+        try {
+          // Pour chaque token, récupérer ses données et son état de listing en parallèle
+          const [tokenData, listing] = await Promise.all([
+            landToken.tokenData(tokenId),
+            marketplace.listings(tokenId)
+          ]);
+
+          return {
+            tokenId,
+            landId: Number(tokenData.landId),
+            tokenNumber: Number(tokenData.tokenNumber),
+            purchasePrice: ethers.formatEther(tokenData.purchasePrice),
+            mintDate: new Date(Number(tokenData.mintDate) * 1000).toISOString(),
+            isListed: listing.isActive,
+            listingPrice: listing.isActive ? ethers.formatEther(listing.price) : null,
+            seller: listing.isActive ? listing.seller : null
+          };
+        } catch (error) {
+          this.logger.warn(`[2025-05-05 09:23:17] nesssim - Erreur lors de la récupération des détails du token ${tokenId}: ${error.message}`);
+          return null;
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      allResults.push(...batchResults.filter(Boolean));
+    }
+
+    return allResults;
+  }
+
 
   /**
    * Liste un token à vendre sur le marketplace
@@ -1579,5 +1816,213 @@ export class BlockchainService implements OnModuleInit {
     return new Date().toISOString().replace('T', ' ').substring(0, 19);
   }
 
+  async getMarketplaceListings() {
+    try {
+      this.logger.log(`Récupération des listings du marketplace`);
 
+      // 1. Obtenir directement la liste des tokens actifs depuis le contrat
+      const activeListingIdsRaw = await this.marketplace.getAllActiveListings();
+
+      // Convertir en tableau standard pour éviter les problèmes de propriétés en lecture seule
+      const activeListingIds = [...activeListingIdsRaw].map(id => Number(id));
+
+      if (activeListingIds.length === 0) {
+        return {
+          success: true,
+          data: [],
+          count: 0,
+          message: 'Aucun token en vente trouvé sur le marketplace',
+          timestamp: this.formatDate()
+        };
+      }
+
+      this.logger.log(`[${this.formatDate()}] nesssim - Plage de tokens trouvée: ${Math.min(...activeListingIds)} à ${Math.max(...activeListingIds)}`);
+
+      // 2. Obtenir les détails de tous les listings en une seule requête
+      const [prices, sellers, isActives, timestamps] =
+        await this.marketplace.getMultipleListingDetails(activeListingIds);
+
+      // 3. Préparer le traitement par lots des données de tokens
+      const activeTokensData = [];
+      const batchSize = 20; // Traiter 20 tokens à la fois
+      const landIds = new Set(); // Pour stocker tous les IDs de terrain uniques
+
+      // 4. Traiter les tokens par lots pour éviter de surcharger le fournisseur
+      for (let i = 0; i < activeListingIds.length; i += batchSize) {
+        const batchTokenIds = activeListingIds.slice(i, Math.min(i + batchSize, activeListingIds.length));
+
+        const batchPromises = batchTokenIds.map(async (tokenId, batchIndex) => {
+          const index = i + batchIndex;
+
+          // Vérifier si le listing est actif
+          if (!isActives[index]) return null;
+
+          try {
+            // Récupérer les données du token
+            const tokenData = await this.landToken.tokenData(tokenId);
+            const landId = Number(tokenData.landId);
+            landIds.add(landId); // Ajouter à l'ensemble des terrains
+
+            return {
+              tokenId: tokenId,
+              landId: landId,
+              price: ethers.formatEther(prices[index]),
+              seller: sellers[index],
+              tokenNumber: Number(tokenData.tokenNumber),
+              purchasePrice: ethers.formatEther(tokenData.purchasePrice),
+              mintDate: new Date(Number(tokenData.mintDate) * 1000).toISOString(),
+              listingTimestamp: Number(timestamps[index]),
+              tokenData: {
+                tokenNumber: Number(tokenData.tokenNumber),
+                purchasePrice: ethers.formatEther(tokenData.purchasePrice),
+                mintDate: new Date(Number(tokenData.mintDate) * 1000).toISOString()
+              },
+              land: null // Sera rempli plus tard
+            };
+          } catch (error) {
+            this.logger.warn(`Erreur lors de la récupération des données du token ${tokenId}: ${error.message}`);
+            return null;
+          }
+        });
+
+        const batchResults = await Promise.all(batchPromises);
+        activeTokensData.push(...batchResults.filter(Boolean));
+      }
+
+      // 5. Récupérer les détails des terrains par lots
+      const landDetailsMap = new Map();
+      const landIdsArray = Array.from(landIds);
+
+      for (let i = 0; i < landIdsArray.length; i += batchSize) {
+        const batchLandIds = landIdsArray.slice(i, Math.min(i + batchSize, landIdsArray.length));
+
+        const batchPromises = batchLandIds.map(async (landId) => {
+          try {
+            const landDetails = await this.landRegistry.getAllLandDetails(landId);
+            return {
+              landId,
+              details: {
+                location: landDetails[0],
+                surface: Number(landDetails[1]),
+                owner: landDetails[2],
+                isRegistered: landDetails[3],
+                status: this.getValidationStatusString(Number(landDetails[5])),
+                totalTokens: Number(landDetails[6]),
+                availableTokens: Number(landDetails[7]),
+                pricePerToken: ethers.formatEther(landDetails[8])
+              }
+            };
+          } catch (error) {
+            this.logger.warn(`Erreur lors de la récupération des détails du terrain ${landId}: ${error.message}`);
+            return { landId, details: null };
+          }
+        });
+
+        const batchResults = await Promise.all(batchPromises);
+        batchResults.forEach(result => {
+          if (result.details) {
+            landDetailsMap.set(result.landId, result.details);
+          }
+        });
+      }
+
+      // 6. Compléter les données des tokens avec les détails des terrains
+      activeTokensData.forEach(token => {
+        if (landDetailsMap.has(token.landId)) {
+          token.land = landDetailsMap.get(token.landId);
+        }
+      });
+
+      this.logger.log(`[${this.formatDate()}] nesssim - Récupéré ${activeTokensData.length} tokens en vente`);
+
+      return {
+        success: true,
+        data: activeTokensData,
+        count: activeTokensData.length,
+        message: `Récupéré ${activeTokensData.length} tokens en vente sur le marketplace`,
+        timestamp: this.formatDate()
+      };
+    } catch (error) {
+      this.logger.error(`Erreur lors de la récupération des listings: ${error.message}`);
+      throw new Error(`Échec de la récupération des listings: ${error.message}`);
+    }
+  }
+
+  async getUserListedTokens(ethAddress: string) {
+    try {
+      if (!ethers.isAddress(ethAddress)) {
+        throw new Error('Adresse Ethereum invalide');
+      }
+
+      this.logger.log(`Récupération des tokens mis en vente par l'utilisateur: ${ethAddress}`);
+
+      // 1. Utiliser la méthode optimisée pour obtenir directement les tokens listés par l'utilisateur
+      const userListedTokenIds = await this.marketplace.getListingsByUser(ethAddress);
+
+      if (userListedTokenIds.length === 0) {
+        return {
+          success: true,
+          data: [],
+          count: 0,
+          message: `Aucun token mis en vente trouvé pour l'adresse ${ethAddress}`,
+        };
+      }
+
+      // 2. Obtenir les détails des listings en une seule requête
+      const [prices, sellers, isActives, timestamps] =
+        await this.marketplace.getMultipleListingDetails(userListedTokenIds);
+
+      // 3. Préparer le traitement par lots
+      const listedTokens = [];
+      const landIds = new Set();
+      const batchSize = 20;
+
+      // 4. Récupérer les données des tokens par lots
+      for (let i = 0; i < userListedTokenIds.length; i += batchSize) {
+        const batch = userListedTokenIds.slice(i, Math.min(i + batchSize, userListedTokenIds.length));
+        const batchPromises = batch.map(async (tokenId, batchIndex) => {
+          const index = i + batchIndex;
+          if (!isActives[index]) return null; // Ignorer les inactifs
+
+          try {
+            // Récupérer les données du token
+            const tokenData = await this.landToken.tokenData(tokenId);
+            const landId = Number(tokenData.landId);
+            landIds.add(landId);
+
+            return {
+              tokenId: Number(tokenId),
+              landId: landId,
+              price: ethers.formatEther(prices[index]),
+              seller: ethAddress,
+              tokenData: {
+                tokenNumber: Number(tokenData.tokenNumber),
+                purchasePrice: ethers.formatEther(tokenData.purchasePrice),
+                mintDate: new Date(Number(tokenData.mintDate) * 1000).toISOString()
+              },
+              listingTimestamp: Number(timestamps[index]),
+              listingDate: new Date(Number(timestamps[index]) * 1000).toISOString(),
+              land: null // Sera rempli plus tard
+            };
+          } catch (error) {
+            this.logger.warn(`Erreur lors de la récupération des données du token ${tokenId}: ${error.message}`);
+            return null;
+          }
+        });
+
+        const batchResults = await Promise.all(batchPromises);
+        listedTokens.push(...batchResults.filter(Boolean));
+      }
+
+      return {
+        success: true,
+        data: listedTokens,
+        count: listedTokens.length,
+        message: `Récupéré ${listedTokens.length} tokens mis en vente par l'utilisateur ${ethAddress}`,
+      };
+    } catch (error) {
+      this.logger.error(`Erreur lors de la récupération des tokens mis en vente: ${error.message}`);
+      throw new Error(`Échec de la récupération des tokens mis en vente: ${error.message}`);
+    }
+  }
 }
