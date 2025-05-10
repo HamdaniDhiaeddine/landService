@@ -37,7 +37,7 @@ export class LandService {
         throw new Error('Invalid Ethereum address');
       }
 
-      this.logger.log(`Starting land creation process at ${new Date().toISOString()} for user: nesssim`);
+      this.logger.log(`Starting land creation process at ${new Date().toISOString()}`);
       // Définir des valeurs par défaut ou ajuster pour la démo
       const totalTokens = createLandDto.totalTokens || 100; // Valeur par défaut: 100 tokens
 

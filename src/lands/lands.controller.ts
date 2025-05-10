@@ -216,7 +216,6 @@ export class LandController {
         message: error.message,
         stack: error.stack,
         timestamp: new Date().toISOString(),
-        user: 'nesssim'
       });
 
       if (error.response) {
