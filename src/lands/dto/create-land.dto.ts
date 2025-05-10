@@ -1,5 +1,5 @@
 // Ajout du champ fileBuffers dans le DTO
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { IsString, IsNumber, IsOptional, IsArray, Min, IsEthereumAddress, IsObject, ValidateNested } from 'class-validator';
 import { AmenitiesDto } from './Amenities.dto';
 
@@ -29,6 +29,7 @@ export class CreateLandDto {
   //@Min(0)
   surface: string;
 
+  @Transform(({ value }) => value ? parseInt(value, 10) : undefined)
   @IsNumber()
   @IsOptional()
   totalTokens?: number;
