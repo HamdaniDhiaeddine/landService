@@ -674,11 +674,11 @@ export class MarketplaceService {
         try {
             const currentDateTime = this.getCurrentDateTime();
             this.logger.log(`[${currentDateTime}] Retrieving marketplace listings`);
-    
+
             // Use the optimized blockchain service method
             const blockchainResponse = await this.blockchainService.getMarketplaceListings();
             const listings = blockchainResponse.data || [];
-    
+
             if (listings.length === 0) {
                 return {
                     success: true,
@@ -688,30 +688,30 @@ export class MarketplaceService {
                     timestamp: currentDateTime
                 };
             }
-    
+
             // Enhance listings with MongoDB data
             const enhancedListings = await Promise.all(listings.map(async (listing) => {
                 try {
                     // Get land details from MongoDB
                     const land = await this.landModel.findOne({ blockchainLandId: listing.landId.toString() }).exec();
-    
+
                     // Calculate investment potential
                     const listingDate = listing.listingTimestamp ? new Date(listing.listingTimestamp * 1000) : new Date();
                     const hoursListed = Math.floor((new Date().getTime() - listingDate.getTime()) / (1000 * 60 * 60));
-    
+
                     // Extract purchase price from the right location
                     let purchasePrice = listing.purchasePrice;
                     if (!purchasePrice && listing.tokenData) {
                         purchasePrice = listing.tokenData.purchasePrice;
                     }
-    
+
                     const investmentScore = this.calculateInvestmentPotential(
                         parseFloat(listing.price),
                         parseFloat(purchasePrice),
                         land?.location || listing.land?.location || '',
                         hoursListed
                     );
-    
+
                     return {
                         ...listing,
                         listingDate: listingDate,
@@ -741,7 +741,7 @@ export class MarketplaceService {
                     return listing;
                 }
             }));
-    
+
             return {
                 success: true,
                 data: enhancedListings,
@@ -842,47 +842,41 @@ export class MarketplaceService {
    * @param ethAddress Adresse Ethereum de l'utilisateur
    * @returns Liste des tokens avec prix d'achat et prix de vente actuel
    */
+
     async getEnhancedUserTokens(ethAddress: string) {
         try {
             if (!ethers.isAddress(ethAddress)) {
                 throw new BadRequestException('Adresse Ethereum invalide');
             }
+
             this.logger.log(`Récupération des tokens améliorés pour l'utilisateur: ${ethAddress}`);
-
+    
             // 1. Récupérer les contrats
-            const landToken = this.blockchainService.getLandToken();
-            const marketplace = this.blockchainService.getMarketplace();
             const landRegistry = this.blockchainService.getLandRegistry();
-
-            // 2. AMÉLIORATION: Récupérer directement tous les tokens possédés par l'utilisateur
-            // en utilisant la méthode du smart contract au lieu de scanner tous les tokens
-            const userOwnedTokensResponse = await this.blockchainService.getUserTokens(ethAddress);
-            const userOwnedTokens = userOwnedTokensResponse.data || [];
-
-            // 3. AMÉLIORATION: Récupérer directement les tokens listés par l'utilisateur
-            // en utilisant la méthode du smart contract
-            const userListedTokenIds = await marketplace.getListingsByUser(ethAddress);
-
-            // 4. AMÉLIORATION: Obtenir les détails des listings en une seule requête
-            let listingsMap = new Map();
-            if (userListedTokenIds.length > 0) {
-                const [prices, sellers, isActives, timestamps] =
-                    await marketplace.getMultipleListingDetails(userListedTokenIds);
-
-                for (let i = 0; i < userListedTokenIds.length; i++) {
-                    if (isActives[i]) {
-                        const tokenId = Number(userListedTokenIds[i]);
-                        listingsMap.set(tokenId, {
-                            price: ethers.formatEther(prices[i]),
-                            seller: sellers[i],
-                            timestamp: Number(timestamps[i])
-                        });
-                    }
-                }
+    
+            // 2. Utiliser les méthodes optimisées pour récupérer les tokens de l'utilisateur
+            const userTokensResponse = await this.blockchainService.getUserTokens(ethAddress);
+            const userOwnedTokens = userTokensResponse.data || [];
+    
+            // Nous allons essayer de récupérer les tokens listés, mais s'il y a une erreur, nous continuons quand même
+            let userListedTokens = [];
+            try {
+                const userListedTokensResponse = await this.blockchainService.getUserListedTokens(ethAddress);
+                userListedTokens = userListedTokensResponse.data || [];
+            } catch (error) {
+                this.logger.warn(`Erreur lors de la récupération des tokens listés, on continue avec les tokens possédés uniquement: ${error.message}`);
             }
-
-            // Si aucun token n'a été trouvé, retourner un résultat vide
-            if (userOwnedTokens.length === 0 && listingsMap.size === 0) {
+    
+            // Créer une map des tokens listés pour un accès rapide
+            const listedTokensMap = new Map();
+            userListedTokens.forEach(token => {
+                listedTokensMap.set(token.tokenId, token);
+            });
+    
+            this.logger.log(`Trouvé ${userOwnedTokens.length} tokens possédés et ${userListedTokens.length} tokens listés pour ${ethAddress}`);
+    
+            // Si aucun token n'est trouvé, retourner un résultat vide
+            if (userOwnedTokens.length === 0 && userListedTokens.length === 0) {
                 return {
                     success: true,
                     data: {
@@ -902,207 +896,113 @@ export class MarketplaceService {
                     message: `Aucun token trouvé pour l'adresse ${ethAddress}`,
                 };
             }
-
-            // 5. Collecter tous les IDs de terrains uniques pour les récupérer efficacement
-            const landIds = new Set();
-            userOwnedTokens.forEach(token => landIds.add(token.landId));
-
-            // Ajouter les ID de terrain des tokens listés qui ne sont pas dans userOwnedTokens
-            for (const tokenId of listingsMap.keys()) {
-                const found = userOwnedTokens.find(t => t.tokenId === tokenId);
-                if (!found) {
-                    try {
-                        const tokenData = await landToken.tokenData(tokenId);
-                        landIds.add(Number(tokenData.landId));
-                    } catch (error) {
-                        this.logger.warn(`Erreur lors de la récupération des données du token ${tokenId}: ${error.message}`);
-                    }
+    
+            // 3. Collecter tous les tokens uniques (possédés + listés)
+            const allTokens = [...userOwnedTokens];
+    
+            // Ajouter les tokens listés qui ne sont pas déjà dans userOwnedTokens
+            for (const listedToken of userListedTokens) {
+                if (!allTokens.some(token => token.tokenId === listedToken.tokenId)) {
+                    allTokens.push(listedToken);
                 }
             }
-
-            // 6. AMÉLIORATION: Récupérer les détails des terrains en lots
-            const landDetailsMap = new Map();
-            const landIdsArray = Array.from(landIds);
-            const batchSize = 20;
-
-            for (let i = 0; i < landIdsArray.length; i += batchSize) {
-                const batchLandIds = landIdsArray.slice(i, Math.min(i + batchSize, landIdsArray.length));
-                const batchPromises = batchLandIds.map(async landId => {
-                    try {
-                        const landDetails = await landRegistry.getAllLandDetails(landId);
-                        return {
-                            landId,
-                            details: {
-                                location: landDetails[0],
-                                surface: Number(landDetails[1]),
-                                owner: landDetails[2],
-                                isRegistered: landDetails[3],
-                                status: this.blockchainService.getValidationStatusString(Number(landDetails[5])),
-                                totalTokens: Number(landDetails[6]),
-                                availableTokens: Number(landDetails[7]),
-                                pricePerToken: ethers.formatEther(landDetails[8])
-                            }
-                        };
-                    } catch (error) {
-                        this.logger.warn(`Erreur lors de la récupération des détails du terrain ${landId}: ${error.message}`);
-                        return { landId, details: null };
-                    }
-                });
-
-                const batchResults = await Promise.all(batchPromises);
-                batchResults.forEach(result => {
-                    landDetailsMap.set(result.landId, result.details);
-                });
-            }
-
-            // 7. Récupérer les informations des terrains depuis MongoDB en une seule requête
-            const lands = await this.landModel.find({
-                blockchainLandId: { $in: landIdsArray.map(id => id.toString()) }
-            }).exec();
-
-            const landMongoMap = new Map();
-            lands.forEach(land => {
-                landMongoMap.set(Number(land.blockchainLandId), {
-                    id: land._id.toString(),
-                    title: land.title || '',
-                    location: land.location || '',
-                    surface: land.surface || 0,
-                    imageUrl: land.imageCIDs && land.imageCIDs.length > 0 ?
-                        `https://ipfs.io/ipfs/${land.imageCIDs[0]}` : null
-                });
-            });
-
-            // 8. Préparer les données pour les tokens qui sont listés mais pas dans userOwnedTokens
-            const listedNotOwnedTokens = [];
-            for (const tokenId of listingsMap.keys()) {
-                if (!userOwnedTokens.find(t => t.tokenId === tokenId)) {
-                    try {
-                        const tokenData = await landToken.tokenData(tokenId);
-                        listedNotOwnedTokens.push({
-                            tokenId: tokenId,
-                            landId: Number(tokenData.landId),
-                            tokenNumber: Number(tokenData.tokenNumber),
-                            purchasePrice: ethers.formatEther(tokenData.purchasePrice),
-                            mintDate: new Date(Number(tokenData.mintDate) * 1000).toISOString(),
-                            isListed: true,
-                            listingPrice: listingsMap.get(tokenId).price,
-                            seller: listingsMap.get(tokenId).seller
-                        });
-                    } catch (error) {
-                        this.logger.warn(`Erreur lors de la récupération des données du token ${tokenId}: ${error.message}`);
-                    }
-                }
-            }
-
-            // 9. Combiner tous les tokens (possédés et listés non possédés)
-            const allTokens = [...userOwnedTokens, ...listedNotOwnedTokens];
-
-            // 10. Calculs et préparation des données améliorées
+    
+            // 4. Calculer les statistiques et enrichir les tokens
             let totalPurchaseValue = 0;
             let totalCurrentValue = 0;
             let totalListedValue = 0;
-
+    
             const enhancedTokens = allTokens.map(token => {
-                // Déterminer le propriétaire et si le token est listé
-                const isListedByUser = listingsMap.has(token.tokenId);
-                const isOwnedByUser = userOwnedTokens.some(t => t.tokenId === token.tokenId);
-                const ownerStatus = isOwnedByUser ? "you" : "marketplace";
-
-                // Récupérer les détails du terrain
-                const landDetails = landDetailsMap.get(token.landId);
-                const landMongoDetails = landMongoMap.get(token.landId);
-
-                // Calculer les prix
-                const purchasePrice = token.purchasePrice;
-                const currentMarketPrice = landDetails ? landDetails.pricePerToken : purchasePrice;
-                const listingPrice = isListedByUser ? listingsMap.get(token.tokenId).price : null;
-
+                // Déterminer si le token est listé
+                const isListed = listedTokensMap.has(token.tokenId) || token.isListed;
+    
+                // Obtenir les prix
+                const purchasePrice = token.purchasePrice || (token.tokenData?.purchasePrice || "0");
+    
+                let currentMarketPrice = purchasePrice;
+                if (token.land?.pricePerToken) {
+                    currentMarketPrice = token.land.pricePerToken;
+                }
+    
+                const listingPrice = isListed ? (listedTokensMap.get(token.tokenId)?.price || token.listingPrice) : null;
+    
                 // Calculer les valeurs pour les statistiques
                 const purchasePriceValue = parseFloat(purchasePrice);
                 const currentMarketPriceValue = parseFloat(currentMarketPrice);
                 const listingPriceValue = listingPrice ? parseFloat(listingPrice) : null;
-
-                // Calculer les variations
-                let marketPriceChange = null;
-                if (purchasePriceValue > 0 && currentMarketPriceValue > 0) {
-                    marketPriceChange = ((currentMarketPriceValue - purchasePriceValue) / purchasePriceValue) * 100;
-                }
-
-                let listingPriceChange = null;
-                if (purchasePriceValue > 0 && listingPriceValue) {
-                    listingPriceChange = ((listingPriceValue - purchasePriceValue) / purchasePriceValue) * 100;
-                }
-
-                // Mise à jour des totaux
+    
+                // Mettre à jour les totaux
                 totalPurchaseValue += purchasePriceValue;
                 totalCurrentValue += currentMarketPriceValue;
                 if (listingPriceValue) totalListedValue += listingPriceValue;
-
-                // Calculer les heures écoulées depuis la mise en vente
-                const hoursListed = isListedByUser && listingsMap.get(token.tokenId).timestamp ?
-                    Math.floor((new Date().getTime() - new Date(listingsMap.get(token.tokenId).timestamp * 1000).getTime()) / (1000 * 60 * 60)) : 0;
-
-                // Calculer le score de potentiel d'investissement
-                const investmentScore = isListedByUser ? this.calculateInvestmentPotential(
+    
+                // Calculer les variations de prix
+                const marketPriceChange = this.calculatePriceChange(purchasePrice, currentMarketPrice);
+                const listingPriceChange = listingPrice ?
+                    this.calculatePriceChange(purchasePrice, listingPrice) : null;
+    
+                // Calculer les heures depuis la mise en vente
+                const listedToken = listedTokensMap.get(token.tokenId);
+                const listingTimestamp = listedToken?.listingTimestamp || 0;
+                const hoursListed = listingTimestamp ?
+                    Math.floor((new Date().getTime() - new Date(listingTimestamp * 1000).getTime()) / (1000 * 60 * 60)) : 0;
+    
+                // Calculer le potentiel d'investissement 
+                const location = token.land?.location || '';
+                const investmentScore = isListed ? this.calculateInvestmentPotential(
                     listingPriceValue,
                     purchasePriceValue,
-                    landDetails?.location || '',
+                    location,
                     hoursListed
                 ) : null;
-
-                // Construire l'objet token amélioré
+    
+                // Déterminer l'owner status basé sur si le token est possédé ou listé
+                const ownerStatus = token.seller === ethAddress || token.owner === "you" ? "you" : "marketplace";
+    
                 return {
                     tokenId: token.tokenId,
                     landId: token.landId,
-                    tokenNumber: token.tokenNumber,
+                    tokenNumber: token.tokenNumber || token.tokenData?.tokenNumber,
                     owner: ownerStatus,
                     purchaseInfo: {
                         price: purchasePrice,
-                        date: token.mintDate,
+                        date: token.mintDate || token.tokenData?.mintDate,
                         formattedPrice: `${purchasePrice} ETH`
                     },
                     currentMarketInfo: {
                         price: currentMarketPrice,
-                        change: marketPriceChange,
-                        changeFormatted: marketPriceChange !== null ? `${marketPriceChange.toFixed(2)}%` : "N/A",
+                        change: marketPriceChange.percentage,
+                        changeFormatted: marketPriceChange.formatted,
+                        isPositive: marketPriceChange.isPositive,
                         formattedPrice: `${currentMarketPrice} ETH`
                     },
-                    listingInfo: isListedByUser ? {
+                    listingInfo: isListed ? {
                         price: listingPrice,
-                        seller: listingsMap.get(token.tokenId).seller,
-                        change: listingPriceChange,
-                        changeFormatted: listingPriceChange !== null ? `${listingPriceChange.toFixed(2)}%` : "N/A",
+                        seller: listedToken?.seller || token.seller,
+                        change: listingPriceChange?.percentage,
+                        changeFormatted: listingPriceChange?.formatted,
+                        isPositive: listingPriceChange?.isPositive,
                         formattedPrice: `${listingPrice} ETH`,
-                        listedAt: listingsMap.get(token.tokenId).timestamp ?
-                            new Date(listingsMap.get(token.tokenId).timestamp * 1000).toISOString() :
-                            null,
+                        listingDate: listedToken?.listingDate || new Date(listingTimestamp * 1000).toISOString()
                     } : null,
-                    isListed: isListedByUser,
-                    land: {
-                        ...(landMongoDetails || {}),
-                        ...(landDetails || {})
-                    },
-                    investmentMetrics: isListedByUser ? {
+                    isListed: isListed,
+                    land: token.land,
+                    investmentMetrics: isListed ? {
                         potential: investmentScore,
                         rating: this.getInvestmentRating(investmentScore)
                     } : null
                 };
             });
-
-            // 11. Trier les tokens: possédés d'abord, puis listés
+    
+            // 5. Trier les tokens: possédés d'abord, puis listés
             enhancedTokens.sort((a, b) => {
-                // D'abord par propriété (possédés avant listés)
                 if (a.owner === "you" && b.owner !== "you") return -1;
                 if (a.owner !== "you" && b.owner === "you") return 1;
-
-                // Ensuite par terrain
                 if (a.landId !== b.landId) return a.landId - b.landId;
-
-                // Enfin par tokenId
                 return a.tokenId - b.tokenId;
             });
-
-            // 12. Statistiques globales
+    
+            // 6. Préparer les statistiques finales
             const stats = {
                 totalTokens: enhancedTokens.length,
                 totalPurchaseValue: totalPurchaseValue.toFixed(6),
@@ -1115,7 +1015,7 @@ export class MarketplaceService {
                 countOwned: enhancedTokens.filter(t => t.owner === "you").length,
                 countListed: enhancedTokens.filter(t => t.isListed).length
             };
-
+    
             return {
                 success: true,
                 data: {
