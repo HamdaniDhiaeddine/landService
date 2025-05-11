@@ -138,37 +138,6 @@ export class DocusignService {
         }
     }
 
-    /**
-     * Utilitaire pour échanger un code contre un token avec un code verifier donné
-     */
-    private exchangeTokenWithVerifier(code: string, codeVerifier: string): Promise<any> {
-        const integrationKey = this.configService.get<string>('DOCUSIGN_INTEGRATION_KEY');
-        const clientSecret = this.configService.get<string>('DOCUSIGN_CLIENT_SECRET');
-        const redirectUri = this.configService.get<string>('DOCUSIGN_REDIRECT_URI');
-
-        // Promisify le callback
-        return new Promise((resolve, reject) => {
-            this.apiClient.generateAccessToken(
-                integrationKey,
-                clientSecret,
-                code,
-                {
-                    redirectUri,
-                    codeVerifier,
-                },
-                (error, response) => {
-                    if (error) {
-                        this.logger.error(`Erreur token DocuSign: ${JSON.stringify(error)}`);
-                        return reject(error);
-                    }
-                    this.logger.log('Token d\'accès généré avec succès');
-                    resolve(response);
-                }
-            );
-        });
-    }
-
-
 
     /**
      * Crée une enveloppe pour la signature
@@ -202,7 +171,6 @@ export class DocusignService {
                 }
 
                 // Utiliser le premier compte disponible
-                // IMPORTANT: La propriété est 'account_id' (avec underscore) dans l'API REST directe
                 accountIdToUse = userInfo.accounts[0].account_id;
 
                 if (!accountIdToUse) {
@@ -341,37 +309,46 @@ export class DocusignService {
         signerName: string,
         title: string,
         clientUserId: string,
-        accountId: string
+        accountId: string,
+        documentName?: string,  // NOUVEAU: Passer le nom du document
+        documentType?: string   // NOUVEAU: Passer le type du document
     ): Promise<string> {
         try {
             this.logger.log(`Création d'une enveloppe pour ${signerName} (${signerEmail})`);
-
+    
+            // Nettoyer le documentBase64 des caractères indésirables (espaces, sauts de ligne)
+            const cleanBase64 = documentBase64
+                .replace(/\s/g, '')  // Supprimer les espaces, sauts de ligne
+                .replace(/[^A-Za-z0-9+/=]/g, '');  // Garder uniquement les caractères Base64 valides
+    
             // Configuration de l'authentification
             this.apiClient.addDefaultHeader('Authorization', `Bearer ${accessToken}`);
-
+    
             // Initialiser l'API pour les enveloppes
             const envelopesApi = new docusign.EnvelopesApi(this.apiClient);
-
+    
             // Créer la définition de l'enveloppe
             const envelope = new docusign.EnvelopeDefinition();
-
+    
             // Définir le statut sur "sent"
             envelope.status = "sent";
-
-            // AJOUT : Définir l'objet (subject) et un message d'email
-            envelope.emailSubject = title || "Document à signer"; // ← AJOUT OBLIGATOIRE
-            envelope.emailBlurb = "Veuillez signer ce document"; // ← Optionnel mais recommandé
-
+    
+            // Définir l'objet (subject) et un message d'email
+            envelope.emailSubject = title || "Document à signer";
+            envelope.emailBlurb = "Veuillez signer ce document";
+    
             // Créer le document
             const document = new docusign.Document();
-            document.documentBase64 = documentBase64;
-            document.name = title || "Document à signer";
-            document.fileExtension = "pdf";
+            document.documentBase64 = cleanBase64;
+            
+            // NOUVEAU: Utiliser le nom et le type fournis ou des valeurs par défaut
+            document.name = documentName || `${title}.pdf`;
+            document.fileExtension = documentType || "pdf";
             document.documentId = "1";
-
+    
             // Ajouter le document à l'enveloppe
             envelope.documents = [document];
-
+    
             // Créer un signataire avec clientUserId pour la signature embarquée
             const signer = new docusign.Signer();
             signer.email = signerEmail;
@@ -379,7 +356,7 @@ export class DocusignService {
             signer.recipientId = "1";
             signer.routingOrder = "1";
             signer.clientUserId = clientUserId; // Important pour la signature embarquée
-
+    
             // Ajouter une zone de signature
             const signHere = new docusign.SignHere();
             signHere.documentId = "1";
@@ -387,30 +364,33 @@ export class DocusignService {
             signHere.recipientId = "1";
             signHere.xPosition = "150";
             signHere.yPosition = "650";
-
+    
             // Ajouter le tag de signature au signataire
             signer.tabs = new docusign.Tabs();
             signer.tabs.signHereTabs = [signHere];
-
+    
             // Ajouter le signataire à l'enveloppe
             const recipients = new docusign.Recipients();
             recipients.signers = [signer];
             envelope.recipients = recipients;
-
+    
             // Débogage: afficher les paramètres de l'enveloppe
             this.logger.log(`Paramètres de l'enveloppe: ${JSON.stringify({
                 status: envelope.status,
                 emailSubject: envelope.emailSubject,
                 emailBlurb: envelope.emailBlurb,
                 documents: envelope.documents.length,
-                recipients: envelope.recipients.signers.length
+                recipients: envelope.recipients.signers.length,
+                // NOUVEAU: Logguer les informations du document
+                documentName: document.name,
+                documentType: document.fileExtension
             }, null, 2)}`);
-
+    
             // Créer l'enveloppe
             const result = await envelopesApi.createEnvelope(accountId, {
                 envelopeDefinition: envelope
             });
-
+    
             this.logger.log(`Enveloppe créée avec succès, ID: ${result.envelopeId}`);
             return result.envelopeId;
         } catch (error) {

@@ -862,9 +862,7 @@ export class MarketplaceService {
                 throw new BadRequestException('Adresse Ethereum invalide');
             }
     
-            const currentDateTime = "2025-05-10 15:30:17";
-            const currentUser = "nesssim";
-            this.logger.log(`[${currentDateTime}] ${currentUser} - Récupération des tokens améliorés pour l'utilisateur: ${ethAddress}`);
+            this.logger.log(`Récupération des tokens améliorés pour l'utilisateur: ${ethAddress}`);
     
             // 1. Récupérer les contrats
             const landRegistry = this.blockchainService.getLandRegistry();
@@ -879,7 +877,7 @@ export class MarketplaceService {
                 const userListedTokensResponse = await this.blockchainService.getUserListedTokens(ethAddress);
                 userListedTokens = userListedTokensResponse.data || [];
             } catch (error) {
-                this.logger.warn(`[${currentDateTime}] ${currentUser} - Erreur lors de la récupération des tokens listés, on continue avec les tokens possédés uniquement: ${error.message}`);
+                this.logger.warn(`Erreur lors de la récupération des tokens listés, on continue avec les tokens possédés uniquement: ${error.message}`);
             }
     
             // Créer une map des tokens listés pour un accès rapide
@@ -890,7 +888,7 @@ export class MarketplaceService {
                 }
             });
     
-            this.logger.log(`[${currentDateTime}] ${currentUser} - Trouvé ${userOwnedTokens.length} tokens possédés et ${userListedTokens.length} tokens listés pour ${ethAddress}`);
+            this.logger.log(` Trouvé ${userOwnedTokens.length} tokens possédés et ${userListedTokens.length} tokens listés pour ${ethAddress}`);
     
             // Si aucun token n'est trouvé, retourner un résultat vide
             if (userOwnedTokens.length === 0 && userListedTokens.length === 0) {
@@ -911,7 +909,6 @@ export class MarketplaceService {
                     },
                     count: 0,
                     message: `Aucun token trouvé pour l'adresse ${ethAddress}`,
-                    timestamp: currentDateTime
                 };
             }
     
@@ -1080,7 +1077,7 @@ export class MarketplaceService {
                 message: `Récupéré ${enhancedTokens.length} tokens améliorés pour l'adresse ${ethAddress}`,
             };
         } catch (error) {
-            this.logger.error(`[2025-05-10 15:30:17] nesssim - Erreur lors de la récupération des tokens améliorés: ${error.message}`, error.stack);
+            this.logger.error(` Erreur lors de la récupération des tokens améliorés: ${error.message}`, error.stack);
             
             // En cas d'erreur, retourner un résultat avec un tableau vide mais une structure complète
             // pour éviter les erreurs de null dans le frontend
