@@ -602,16 +602,22 @@ export class MarketplaceService {
     * @returns Object with percentage change details
     */
     private calculatePriceChange(purchasePrice: string, currentPrice: string) {
-        const purchase = parseFloat(purchasePrice);
-        const current = parseFloat(currentPrice);
-
+        // Assurer des valeurs valides
+        const purchaseStr = (purchasePrice || "0").toString();
+        const currentStr = (currentPrice || "0").toString();
+        
+        // Convertir en nombres
+        const purchase = parseFloat(purchaseStr) || 0;
+        const current = parseFloat(currentStr) || 0;
+    
+        // Éviter la division par zéro
         if (purchase === 0) return { percentage: 0, formatted: '0%', isPositive: false };
-
+    
         const change = ((current - purchase) / purchase) * 100;
-
+    
         return {
-            percentage: change,
-            formatted: `${change.toFixed(2)}%`,
+            percentage: isNaN(change) ? 0 : change,
+            formatted: isNaN(change) ? '0%' : `${change.toFixed(2)}%`,
             isPositive: change >= 0
         };
     }
@@ -625,32 +631,38 @@ export class MarketplaceService {
      * @returns Score from 1 to 10
      */
     private calculateInvestmentPotential(
-        price: number,
-        purchasePrice: number,
-        location: string,
-        hoursListed: number
+        price: number | null | undefined,
+        purchasePrice: number | null | undefined,
+        location: string | null | undefined,
+        hoursListed: number | null | undefined
     ): number {
-        // Base score
-        let score = 5;
-
-        // Price ratio factor
-        if (purchasePrice > 0) {
-            const priceRatio = price / purchasePrice;
-            if (priceRatio < 1.1) score += 2; // Excellent price
-            else if (priceRatio < 1.3) score += 1; // Good price
-            else if (priceRatio > 2) score -= 2; // Overpriced
+        // Conversion en nombres valides
+        const priceValue = price || 0;
+        const purchasePriceValue = purchasePrice || 0;
+        const locationStr = location || '';
+        const hoursListedValue = hoursListed || 0;
+        
+        // Facteur basé sur la différence de prix
+        let score = 5; // Score de base
+    
+        // Plus le prix est proche du prix d'achat, meilleur est l'investissement
+        if (purchasePriceValue > 0) {
+            const priceRatio = priceValue / purchasePriceValue;
+            if (priceRatio < 1.1) score += 2; // Très bon prix
+            else if (priceRatio < 1.3) score += 1; // Prix raisonnable
+            else if (priceRatio > 2) score -= 2; // Prix trop élevé
         }
-
-        // Premium location bonus
+    
+        // Bonus pour certains emplacements premium
         const premiumLocations = ['casablanca', 'rabat', 'marrakech', 'tanger'];
-        if (location && premiumLocations.some(loc => location.toLowerCase().includes(loc))) {
+        if (locationStr && premiumLocations.some(loc => locationStr.toLowerCase().includes(loc))) {
             score += 1;
         }
-
-        // Recent listing bonus
-        if (hoursListed < 48) score += 1;
-
-        // Ensure score is between 1 and 10
+    
+        // Bonus pour les listings récents (moins de 48 heures)
+        if (hoursListedValue < 48) score += 1;
+    
+        // S'assurer que le score reste entre 1 et 10
         return Math.max(1, Math.min(10, score));
     }
 
@@ -659,12 +671,14 @@ export class MarketplaceService {
      * @param score Numerical score (1-10)
      * @returns Text rating
      */
-    private getInvestmentRating(score: number): string {
-        if (score >= 8) return 'Excellent';
-        if (score >= 6) return 'Good';
-        if (score >= 4) return 'Average';
-        if (score >= 2) return 'Poor';
-        return 'Very Poor';
+    private getInvestmentRating(score: number | null | undefined): string {
+        const scoreValue = score || 0;
+        
+        if (scoreValue >= 8) return 'Excellent';
+        if (scoreValue >= 6) return 'Bon';
+        if (scoreValue >= 4) return 'Moyen';
+        if (scoreValue >= 2) return 'Faible';
+        return 'Très faible';
     }
 
     /**
@@ -842,13 +856,12 @@ export class MarketplaceService {
    * @param ethAddress Adresse Ethereum de l'utilisateur
    * @returns Liste des tokens avec prix d'achat et prix de vente actuel
    */
-
     async getEnhancedUserTokens(ethAddress: string) {
         try {
             if (!ethers.isAddress(ethAddress)) {
                 throw new BadRequestException('Adresse Ethereum invalide');
             }
-
+    
             this.logger.log(`Récupération des tokens améliorés pour l'utilisateur: ${ethAddress}`);
     
             // 1. Récupérer les contrats
@@ -870,10 +883,12 @@ export class MarketplaceService {
             // Créer une map des tokens listés pour un accès rapide
             const listedTokensMap = new Map();
             userListedTokens.forEach(token => {
-                listedTokensMap.set(token.tokenId, token);
+                if (token && token.tokenId) {
+                    listedTokensMap.set(token.tokenId, token);
+                }
             });
     
-            this.logger.log(`Trouvé ${userOwnedTokens.length} tokens possédés et ${userListedTokens.length} tokens listés pour ${ethAddress}`);
+            this.logger.log(` Trouvé ${userOwnedTokens.length} tokens possédés et ${userListedTokens.length} tokens listés pour ${ethAddress}`);
     
             // Si aucun token n'est trouvé, retourner un résultat vide
             if (userOwnedTokens.length === 0 && userListedTokens.length === 0) {
@@ -898,11 +913,12 @@ export class MarketplaceService {
             }
     
             // 3. Collecter tous les tokens uniques (possédés + listés)
-            const allTokens = [...userOwnedTokens];
+            const allTokens = [...userOwnedTokens.filter(token => token !== null)];
     
             // Ajouter les tokens listés qui ne sont pas déjà dans userOwnedTokens
             for (const listedToken of userListedTokens) {
-                if (!allTokens.some(token => token.tokenId === listedToken.tokenId)) {
+                if (listedToken && listedToken.tokenId && 
+                    !allTokens.some(token => token && token.tokenId === listedToken.tokenId)) {
                     allTokens.push(listedToken);
                 }
             }
@@ -913,42 +929,56 @@ export class MarketplaceService {
             let totalListedValue = 0;
     
             const enhancedTokens = allTokens.map(token => {
-                // Déterminer si le token est listé
-                const isListed = listedTokensMap.has(token.tokenId) || token.isListed;
+                if (!token) return null;
     
-                // Obtenir les prix
-                const purchasePrice = token.purchasePrice || (token.tokenData?.purchasePrice || "0");
+                // Déterminer si le token est listé
+                const isListed = token.tokenId && listedTokensMap.has(token.tokenId) || !!token.isListed;
+    
+                // Obtenir les prix (avec vérifications de null)
+                const purchasePrice = token.purchasePrice || 
+                    (token.tokenData && token.tokenData.purchasePrice ? token.tokenData.purchasePrice : "0");
     
                 let currentMarketPrice = purchasePrice;
-                if (token.land?.pricePerToken) {
+                if (token.land && token.land.pricePerToken) {
                     currentMarketPrice = token.land.pricePerToken;
                 }
     
-                const listingPrice = isListed ? (listedTokensMap.get(token.tokenId)?.price || token.listingPrice) : null;
+                const listingPrice = isListed ? 
+                    (token.tokenId && listedTokensMap.has(token.tokenId) ? 
+                        listedTokensMap.get(token.tokenId).price : token.listingPrice) || "0" : "0";
     
-                // Calculer les valeurs pour les statistiques
-                const purchasePriceValue = parseFloat(purchasePrice);
-                const currentMarketPriceValue = parseFloat(currentMarketPrice);
-                const listingPriceValue = listingPrice ? parseFloat(listingPrice) : null;
+                // Assurer que tous les prix sont des chaînes valides
+                const purchasePriceStr = typeof purchasePrice === 'string' ? purchasePrice : "0";
+                const currentMarketPriceStr = typeof currentMarketPrice === 'string' ? currentMarketPrice : "0";
+                const listingPriceStr = typeof listingPrice === 'string' ? listingPrice : "0";
+    
+                // Convertir en nombres pour les calculs
+                const purchasePriceValue = parseFloat(purchasePriceStr) || 0;
+                const currentMarketPriceValue = parseFloat(currentMarketPriceStr) || 0;
+                const listingPriceValue = isListed ? (parseFloat(listingPriceStr) || 0) : 0;
     
                 // Mettre à jour les totaux
                 totalPurchaseValue += purchasePriceValue;
                 totalCurrentValue += currentMarketPriceValue;
-                if (listingPriceValue) totalListedValue += listingPriceValue;
+                if (listingPriceValue > 0) totalListedValue += listingPriceValue;
     
-                // Calculer les variations de prix
-                const marketPriceChange = this.calculatePriceChange(purchasePrice, currentMarketPrice);
-                const listingPriceChange = listingPrice ?
-                    this.calculatePriceChange(purchasePrice, listingPrice) : null;
+                // Calculer les variations de prix avec sécurité supplémentaire
+                const marketPriceChange = this.calculatePriceChange(purchasePriceStr, currentMarketPriceStr);
+                const listingPriceChange = isListed && listingPriceStr !== "0" ? 
+                    this.calculatePriceChange(purchasePriceStr, listingPriceStr) : 
+                    { percentage: 0, formatted: "0%", isPositive: false };
     
                 // Calculer les heures depuis la mise en vente
-                const listedToken = listedTokensMap.get(token.tokenId);
-                const listingTimestamp = listedToken?.listingTimestamp || 0;
-                const hoursListed = listingTimestamp ?
+                const listedToken = token.tokenId ? listedTokensMap.get(token.tokenId) : null;
+                const listingTimestamp = listedToken && listedToken.listingTimestamp ? 
+                    listedToken.listingTimestamp : 
+                    (token.listingTimestamp || 0);
+                    
+                const hoursListed = listingTimestamp > 0 ? 
                     Math.floor((new Date().getTime() - new Date(listingTimestamp * 1000).getTime()) / (1000 * 60 * 60)) : 0;
     
                 // Calculer le potentiel d'investissement 
-                const location = token.land?.location || '';
+                const location = token.land && token.land.location ? token.land.location : '';
                 const investmentScore = isListed ? this.calculateInvestmentPotential(
                     listingPriceValue,
                     purchasePriceValue,
@@ -957,42 +987,63 @@ export class MarketplaceService {
                 ) : null;
     
                 // Déterminer l'owner status basé sur si le token est possédé ou listé
-                const ownerStatus = token.seller === ethAddress || token.owner === "you" ? "you" : "marketplace";
+                // Assurer que seller existe avant de comparer
+                const ownerStatus = (token.seller && token.seller === ethAddress) || 
+                                   (token.owner === "you") ? "you" : "marketplace";
     
+                // Assurer que toutes les dates sont valides
+                const mintDate = token.mintDate || 
+                    (token.tokenData && token.tokenData.mintDate ? token.tokenData.mintDate : new Date().toISOString());
+                    
+                const listingDate = listedToken && listedToken.listingDate ? 
+                    listedToken.listingDate : 
+                    (listingTimestamp > 0 ? new Date(listingTimestamp * 1000).toISOString() : new Date().toISOString());
+    
+                // Construire l'objet avec tous les champs nécessaires garantis non null
                 return {
-                    tokenId: token.tokenId,
-                    landId: token.landId,
-                    tokenNumber: token.tokenNumber || token.tokenData?.tokenNumber,
+                    tokenId: token.tokenId || 0,
+                    landId: token.landId || 0,
+                    tokenNumber: token.tokenNumber || 
+                        (token.tokenData ? token.tokenData.tokenNumber || 0 : 0),
                     owner: ownerStatus,
                     purchaseInfo: {
-                        price: purchasePrice,
-                        date: token.mintDate || token.tokenData?.mintDate,
-                        formattedPrice: `${purchasePrice} ETH`
+                        price: purchasePriceStr,
+                        date: mintDate,
+                        formattedPrice: `${purchasePriceStr} ETH`
                     },
                     currentMarketInfo: {
-                        price: currentMarketPrice,
+                        price: currentMarketPriceStr,
                         change: marketPriceChange.percentage,
                         changeFormatted: marketPriceChange.formatted,
                         isPositive: marketPriceChange.isPositive,
-                        formattedPrice: `${currentMarketPrice} ETH`
+                        formattedPrice: `${currentMarketPriceStr} ETH`
                     },
                     listingInfo: isListed ? {
-                        price: listingPrice,
-                        seller: listedToken?.seller || token.seller,
-                        change: listingPriceChange?.percentage,
-                        changeFormatted: listingPriceChange?.formatted,
-                        isPositive: listingPriceChange?.isPositive,
-                        formattedPrice: `${listingPrice} ETH`,
-                        listingDate: listedToken?.listingDate || new Date(listingTimestamp * 1000).toISOString()
+                        price: listingPriceStr,
+                        seller: (listedToken && listedToken.seller) || token.seller || ethAddress,
+                        change: listingPriceChange.percentage,
+                        changeFormatted: listingPriceChange.formatted,
+                        isPositive: listingPriceChange.isPositive,
+                        formattedPrice: `${listingPriceStr} ETH`,
+                        listingDate: listingDate
                     } : null,
                     isListed: isListed,
-                    land: token.land,
+                    land: token.land || {
+                        location: '',
+                        surface: 0,
+                        owner: '',
+                        isRegistered: false,
+                        status: 'UNKNOWN',
+                        totalTokens: 0,
+                        availableTokens: 0,
+                        pricePerToken: '0'
+                    },
                     investmentMetrics: isListed ? {
-                        potential: investmentScore,
-                        rating: this.getInvestmentRating(investmentScore)
+                        potential: investmentScore || 0,
+                        rating: this.getInvestmentRating(investmentScore || 0)
                     } : null
                 };
-            });
+            }).filter(token => token !== null); // Filtrer les tokens null
     
             // 5. Trier les tokens: possédés d'abord, puis listés
             enhancedTokens.sort((a, b) => {
@@ -1026,8 +1077,28 @@ export class MarketplaceService {
                 message: `Récupéré ${enhancedTokens.length} tokens améliorés pour l'adresse ${ethAddress}`,
             };
         } catch (error) {
-            this.logger.error(`Erreur lors de la récupération des tokens améliorés: ${error.message}`, error.stack);
-            throw new InternalServerErrorException(`Échec de la récupération des tokens améliorés: ${error.message}`);
+            this.logger.error(` Erreur lors de la récupération des tokens améliorés: ${error.message}`, error.stack);
+            
+            // En cas d'erreur, retourner un résultat avec un tableau vide mais une structure complète
+            // pour éviter les erreurs de null dans le frontend
+            return {
+                success: false,
+                data: {
+                    tokens: [],
+                    stats: {
+                        totalTokens: 0,
+                        totalPurchaseValue: "0.000000",
+                        totalCurrentMarketValue: "0.000000",
+                        totalListedValue: "0.000000",
+                        totalProfit: "0.000000",
+                        totalProfitPercentage: "0.00",
+                        countOwned: 0,
+                        countListed: 0
+                    }
+                },
+                count: 0,
+                message: `Erreur lors de la récupération des tokens améliorés: ${error.message}`,
+            };
         }
     }
 }
